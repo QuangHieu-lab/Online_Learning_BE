@@ -1,19 +1,25 @@
 const db = require('../config/db');
 
 const User = {
-    // 1. Tìm user bằng email
+    // ========================================================================
+    // 🔍 GROUP 1: TÌM KIẾM & LẤY DỮ LIỆU
+    // ========================================================================
+
+    // Tìm user bằng Email
     findByEmail: async (email) => {
-        const [rows] = await db.execute('SELECT * FROM users WHERE email = ?', [email]);
-        return rows[0];
+        const sql = 'SELECT * FROM users WHERE email = ?';
+        const [rows] = await db.execute(sql, [email]);
+        return rows[0] || null;
     },
 
-    // 2. Tìm user bằng ID
+    // Tìm user bằng ID
     findById: async (id) => {
-        const [rows] = await db.execute('SELECT * FROM users WHERE user_id = ?', [id]);
-        return rows[0];
+        const sql = 'SELECT * FROM users WHERE user_id = ?';
+        const [rows] = await db.execute(sql, [id]);
+        return rows[0] || null;
     },
 
-    // 3. Lấy quyền (Role) của user -> CẦN CÁI NÀY ĐỂ TẠO TOKEN
+    // Lấy Roles (Quyền) của User
     getUserRoles: async (userId) => {
         const sql = `
             SELECT r.role_name 
@@ -25,26 +31,74 @@ const User = {
         return rows.map(row => row.role_name); // Trả về dạng ['student']
     },
 
-    // 4. Tạo user mới
+    // Tìm user bằng Token Quên mật khẩu
+    findByResetToken: async (token) => {
+        const sql = 'SELECT * FROM users WHERE reset_password_token = ? AND reset_password_expires > NOW()';
+        const [rows] = await db.execute(sql, [token]);
+        return rows[0] || null;
+    },
+
+
+    // ========================================================================
+    // 📝 GROUP 2: TẠO MỚI (CREATE)
+    // ========================================================================
+
+    // Tạo User mới (Khớp với DB mới: first_name, last_name)
     create: async (userData) => {
-        const { first_name, last_name, email, google_id, auth_provider, avatar_url, password_hash } = userData;
-        const [result] = await db.execute(
-            `INSERT INTO users (first_name, last_name, email, google_id, auth_provider, avatar_url, password_hash) 
-             VALUES (?, ?, ?, ?, ?, ?, ?)`,
-            [first_name, last_name, email, google_id, auth_provider, avatar_url, password_hash]
-        );
+        const { 
+            first_name, last_name, email, 
+            password_hash, google_id, auth_provider, avatar_url 
+        } = userData;
+
+        const sql = `
+            INSERT INTO users 
+            (first_name, last_name, email, password_hash, google_id, auth_provider, avatar_url) 
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        `;
+
+        const [result] = await db.execute(sql, [
+            first_name, last_name, email, 
+            password_hash, google_id, auth_provider, avatar_url
+        ]);
+
         return result.insertId;
     },
 
-    // 5. Gán role cho user
-    assignRole: async (userId, roleId) => {
-        await db.execute('INSERT INTO user_roles (user_id, role_id) VALUES (?, ?)', [userId, roleId]);
+    // Gán quyền cho User (Mặc định Role ID 1 = Student)
+    assignRole: async (userId, roleId = 1) => {
+        const sql = 'INSERT INTO user_roles (user_id, role_id) VALUES (?, ?)';
+        await db.execute(sql, [userId, roleId]);
     },
 
-    // 6. Link tài khoản Google (Dùng khi user cũ muốn đăng nhập bằng Google)
+
+    // ========================================================================
+    // 🛠 GROUP 3: CẬP NHẬT (UPDATE)
+    // ========================================================================
+
+    // Link Google vào tài khoản cũ
     linkGoogleAccount: async (userId, googleId, avatarUrl) => {
-        const sql = `UPDATE users SET google_id = ?, avatar_url = ?, auth_provider = 'google' WHERE user_id = ?`;
+        const sql = `
+            UPDATE users 
+            SET google_id = ?, avatar_url = ?, auth_provider = 'google' 
+            WHERE user_id = ?
+        `;
         await db.execute(sql, [googleId, avatarUrl, userId]);
+    },
+
+    // Cập nhật mật khẩu mới
+    updatePassword: async (userId, newPasswordHash) => {
+        const sql = 'UPDATE users SET password_hash = ? WHERE user_id = ?';
+        await db.execute(sql, [newPasswordHash, userId]);
+    },
+
+    // Lưu Token reset password
+    saveResetToken: async (email, token, expiryDate) => {
+        const sql = `
+            UPDATE users 
+            SET reset_password_token = ?, reset_password_expires = ? 
+            WHERE email = ?
+        `;
+        await db.execute(sql, [token, expiryDate, email]);
     }
 };
 

@@ -413,6 +413,7 @@ model LearningProgress {
   enrollment Enrollment @relation(fields: [enrollmentId], references: [enrollmentId], onDelete: Cascade)
   lesson     Lesson     @relation(fields: [lessonId], references: [lessonId], onDelete: Cascade)
 
+  @@unique([enrollmentId, lessonId])
   @@map("learning_progress")
 }
 

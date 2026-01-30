@@ -13,11 +13,14 @@ const path = require('path');
 require('dotenv').config();
 
 const RESET_DB_ON_DEV = process.env.RESET_DB_ON_DEV !== 'false';
+// NODE_WATCH=true enables hot reload; default off to avoid 502 during Google login
+const NODE_WATCH = process.env.NODE_WATCH === 'true';
+const nodeCmd = NODE_WATCH ? 'node --watch src/server.js' : 'node src/server.js';
 
 if (!RESET_DB_ON_DEV) {
   console.log('⚠️  RESET_DB_ON_DEV is disabled. Skipping database reset.');
   console.log('🚀 Starting dev server...\n');
-  execSync('tsx watch src/server.ts', { stdio: 'inherit' });
+  execSync(nodeCmd, { stdio: 'inherit' });
   process.exit(0);
 }
 
@@ -45,7 +48,7 @@ try {
 
   // Step 3: Seed database
   console.log('\n🌱 Seeding database...');
-  execSync('npx tsx prisma/seed.ts', { 
+  execSync('node prisma/seed.js', { 
     stdio: 'inherit',
     cwd: path.join(__dirname, '..')
   });
@@ -53,8 +56,8 @@ try {
   console.log('\n✅ Database reset and seeded successfully!');
   console.log('🚀 Starting dev server...\n');
 
-  // Step 4: Start dev server
-  execSync('tsx watch src/server.ts', { stdio: 'inherit' });
+  // Step 4: Start dev server (NODE_WATCH=false avoids 502 during Google login)
+  execSync(nodeCmd, { stdio: 'inherit' });
 } catch (error) {
   console.error('\n❌ Error during database reset:', error.message);
   process.exit(1);

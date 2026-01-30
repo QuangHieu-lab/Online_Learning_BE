@@ -1,48 +1,59 @@
 # ============================================
 # SERVER CONFIGURATION
 # ============================================
-PORT=3000
+PORT=5000
 FRONTEND_URL=http://127.0.0.1:5173
 
+# Tắt reset DB mỗi lần npm run dev (đặt false để dev nhanh hơn)
+RESET_DB_ON_DEV=false
+
 # ============================================
-# DATABASE
+# DATABASE (MySQL)
 # ============================================
-# PostgreSQL connection string
-# Format: postgresql://USER:PASSWORD@HOST:PORT/DATABASE
-DATABASE_URL=postgresql://user:password@localhost:5432/online_learning
+# Format: mysql://USER:PASSWORD@HOST:PORT/DATABASE
+DATABASE_URL=mysql://root:password@localhost:3306/online_learning
 
 # ============================================
 # JWT AUTHENTICATION
 # ============================================
-# Secret key for JWT token signing (use a strong random string)
 JWT_SECRET=your-super-secret-jwt-key-change-this-in-production
 
 # ============================================
-# GOOGLE GEMINI AI
+# VNPAY (Thanh toán)
 # ============================================
-# Get your API key from: https://makersuite.google.com/app/apikey
+# Lấy từ https://sandbox.vnpayment.vn/ (Sandbox) hoặc VNPAY merchant
+VNP_TMN_CODE=your-vnpay-merchant-code
+VNP_HASH_SECRET=your-vnpay-hash-secret
+VNP_URL=https://sandbox.vnpayment.vn/paymentv2/vpcpay.html
+# URL callback khi VNPAY trả về - phải trỏ đúng backend
+VNP_RETURN_URL=http://localhost:5000/api/payments/vnpay-return
+
+# ============================================
+# GOOGLE / FIREBASE (Đăng nhập Google + Storage)
+# ============================================
+# Bước 1: Tạo project tại https://console.firebase.google.com
+# Bước 2: Bật Authentication > Sign-in method > Google
+# Bước 3: Project Settings > Service Accounts > Generate new private key
+# Bước 4: Copy các giá trị vào đây
+
+FIREBASE_PROJECT_ID=your-firebase-project-id
+FIREBASE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\nYour-private-key-here\n-----END PRIVATE KEY-----\n"
+FIREBASE_CLIENT_EMAIL=firebase-adminsdk-xxxxx@your-project.iam.gserviceaccount.com
+FIREBASE_STORAGE_BUCKET=your-project.firebasestorage.app
+
+# ============================================
+# GOOGLE GEMINI AI (Chat AI, tạo quiz)
+# ============================================
+# Lấy từ https://makersuite.google.com/app/apikey
 GEMINI_API_KEY=your-gemini-api-key-here
 
 # ============================================
-# AWS S3 CONFIGURATION (for video uploads)
+# EMAIL (Thông báo đăng nhập, welcome)
 # ============================================
-# Get these from AWS IAM Console
-AWS_ACCESS_KEY_ID=your-aws-access-key-id
-AWS_SECRET_ACCESS_KEY=your-aws-secret-access-key
-AWS_REGION=ap-southeast-1
-AWS_S3_BUCKET_NAME=your-bucket-name
-
-# ============================================
-# FIREBASE CONFIGURATION (for Google Auth & Email)
-# ============================================
-# Get these from Firebase Console > Project Settings > Service Accounts
-FIREBASE_PROJECT_ID=your-firebase-project-id
-FIREBASE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\nYour private key here\n-----END PRIVATE KEY-----\n"
-FIREBASE_CLIENT_EMAIL=firebase-adminsdk-xxxxx@your-project.iam.gserviceaccount.com
-
-# For frontend (get from Firebase Console > Project Settings > General)
-FIREBASE_WEB_API_KEY=your-firebase-web-api-key
-FIREBASE_AUTH_DOMAIN=your-project.firebaseapp.com
-FIREBASE_STORAGE_BUCKET=your-project.appspot.com
-FIREBASE_MESSAGING_SENDER_ID=123456789
-FIREBASE_APP_ID=1:123456789:web:abcdef
+# Dùng Gmail: Bật 2FA và tạo App Password
+EMAIL_HOST=smtp.gmail.com
+EMAIL_PORT=587
+EMAIL_USER=your-email@gmail.com
+EMAIL_PASSWORD=your-app-password
+EMAIL_FROM=your-email@gmail.com
+EMAIL_FROM_NAME=E-Learning Platform

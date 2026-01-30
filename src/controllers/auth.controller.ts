@@ -1,11 +1,19 @@
 import { Request, Response } from 'express';
+import crypto from 'crypto';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 import prisma from '../utils/prisma';
 import { verifyFirebaseToken } from '../services/firebase.service';
-import { sendLoginNotification } from '../services/email.service';
+import { sendLoginNotification, sendWelcomeWithPassword } from '../services/email.service';
 import { AuthRequest } from '../middleware/auth.middleware';
 import { getCookieOptions } from '../utils/cookie.utils';
+
+/** Generate secure random password (12 chars: letters + numbers) */
+function generateRandomPassword(): string {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789';
+  const bytes = crypto.randomBytes(12);
+  return Array.from(bytes, (b) => chars[b % chars.length]).join('');
+}
 
 export const register = async (req: Request, res: Response) => {
   try {
@@ -196,14 +204,21 @@ export const googleSignIn = async (req: Request, res: Response) => {
       return res.status(500).json({ error: 'Student role not found' });
     }
 
-    // If user doesn't exist, create new user
+    let isNewUser = false;
+
+    // If user doesn't exist, create new user with generated password
     if (!user) {
+      isNewUser = true;
+      const plainPassword = generateRandomPassword();
+      const hashedPassword = await bcrypt.hash(plainPassword, 10);
+      const fullName = name || email.split('@')[0];
+
       user = await prisma.user.create({
         data: {
           email,
-          fullName: name || email.split('@')[0],
-          passwordHash: '', // No password for Google users
-          firebaseUid: uid, // Store Firebase UID for reference
+          fullName,
+          passwordHash: hashedPassword,
+          firebaseUid: uid,
           userRoles: {
             create: {
               roleId: studentRole.roleId,
@@ -217,6 +232,11 @@ export const googleSignIn = async (req: Request, res: Response) => {
             },
           },
         },
+      });
+
+      // Send welcome email with generated password (async, don't block login)
+      sendWelcomeWithPassword(user.email, user.fullName, plainPassword).catch((err) => {
+        console.error('Failed to send welcome email with password:', err);
       });
     } else {
       // Update Firebase UID if not set
@@ -257,11 +277,12 @@ export const googleSignIn = async (req: Request, res: Response) => {
     }
     res.cookie('authToken', token, cookieOptions);
 
-    // Send login notification email (async, don't wait for it)
-    sendLoginNotification(user.email, user.name, 'google').catch((error) => {
-      console.error('Failed to send login notification email:', error);
-      // Don't fail the login if email fails
-    });
+    // Send login notification for existing users only (new users got welcome email)
+    if (!isNewUser) {
+      sendLoginNotification(user.email, user.fullName, 'google').catch((error) => {
+        console.error('Failed to send login notification email:', error);
+      });
+    }
 
     res.json({
       message: 'Google sign-in successful',
@@ -317,12 +338,116 @@ export const getMe = async (req: AuthRequest, res: Response) => {
         userId: user.userId,
         email: user.email,
         fullName: user.fullName,
+        phoneNumber: user.phoneNumber,
+        avatarUrl: user.avatarUrl,
+        currentLevel: user.currentLevel,
         roles,
         createdAt: user.createdAt,
+        updatedAt: user.updatedAt,
       },
     });
   } catch (error) {
     console.error('Get me error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+};
+
+/** Update own profile (except email) */
+export const updateProfile = async (req: AuthRequest, res: Response) => {
+  try {
+    const userId = req.userId;
+    if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+
+    const { fullName, phoneNumber, avatarUrl, currentLevel, newPassword } = req.body;
+
+    const validLevels = ['A0', 'A1', 'A2', 'B1', 'B2', 'C1', 'C2'];
+    if (currentLevel !== undefined && !validLevels.includes(currentLevel)) {
+      return res.status(400).json({ error: 'Invalid level. Must be one of: A0, A1, A2, B1, B2, C1, C2' });
+    }
+
+    const updateData: Record<string, unknown> = {};
+    if (fullName !== undefined) updateData.fullName = fullName;
+    if (phoneNumber !== undefined) updateData.phoneNumber = phoneNumber || null;
+    if (avatarUrl !== undefined) updateData.avatarUrl = avatarUrl || null;
+    if (currentLevel !== undefined) updateData.currentLevel = currentLevel;
+    if (newPassword && newPassword.length >= 6) {
+      updateData.passwordHash = await bcrypt.hash(newPassword, 10);
+    }
+
+    if (Object.keys(updateData).length === 0) {
+      return res.status(400).json({ error: 'No valid fields to update' });
+    }
+
+    const user = await prisma.user.update({
+      where: { userId: typeof userId === 'string' ? parseInt(userId) : userId },
+      data: updateData,
+      include: {
+        userRoles: { include: { role: true } },
+      },
+    });
+
+    const roles = user.userRoles.map(ur => ur.role.roleName);
+
+    res.json({
+      message: 'Profile updated successfully',
+      user: {
+        userId: user.userId,
+        email: user.email,
+        fullName: user.fullName,
+        phoneNumber: user.phoneNumber,
+        avatarUrl: user.avatarUrl,
+        currentLevel: user.currentLevel,
+        roles,
+        createdAt: user.createdAt,
+        updatedAt: user.updatedAt,
+      },
+    });
+  } catch (error) {
+    console.error('Update profile error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+};
+
+/** Delete own account */
+export const deleteOwnAccount = async (req: AuthRequest, res: Response) => {
+  try {
+    const userId = req.userId;
+    if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+
+    const { password } = req.body;
+    const userIdInt = typeof userId === 'string' ? parseInt(userId) : userId;
+
+    const user = await prisma.user.findUnique({
+      where: { userId: userIdInt },
+    });
+
+    if (!user) return res.status(404).json({ error: 'User not found' });
+
+    // Users with password must confirm
+    if (user.passwordHash) {
+      if (!password) {
+        return res.status(400).json({ error: 'Password required to delete account' });
+      }
+      const isValid = await bcrypt.compare(password, user.passwordHash);
+      if (!isValid) {
+        return res.status(401).json({ error: 'Invalid password' });
+      }
+    }
+
+    await prisma.user.delete({
+      where: { userId: userIdInt },
+    });
+
+    // Clear auth cookie
+    const cookieOptions = getCookieOptions();
+    if (process.env.NODE_ENV !== 'production') {
+      delete (cookieOptions as any).domain;
+    }
+    res.cookie('authToken', '', { ...cookieOptions, maxAge: 0 });
+
+    res.json({ message: 'Account deleted successfully' });
+  } catch (error) {
+    console.error('Delete account error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 };

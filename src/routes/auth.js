@@ -12,4 +12,6 @@ router.post('/google', authController.googleLogin);
 // http://localhost:3000/api/auth/logout
 router.post('/logout', authController.logout);
 
+router.post('/register', authController.register);
+
 module.exports = router;

@@ -19,7 +19,7 @@ const aiRoutes = require('./routes/ai.routes');
 const progressRoutes = require('./routes/progress.routes');
 const userRoutes = require('./routes/user.routes');
 const paymentRoutes = require('./routes/payment.routes');
-const cartRoutes = require('./routes/cart.routes');
+
 const app = express();
 const httpServer = createServer(app);
 const io = new Server(httpServer, {
@@ -91,7 +91,7 @@ app.use('/api/ai', aiRoutes);
 app.use('/api/progress', progressRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/payments', paymentRoutes);
-app.use('/api/cart', cartRoutes);
+
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', message: 'Server is running' });
 });

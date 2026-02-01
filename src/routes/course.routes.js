@@ -6,6 +6,7 @@ const {
   updateCourse,
   deleteCourse,
   enrollInCourse,
+  getCoursesByStudentId,
 } = require('../controllers/course.controller');
 const { authenticate, requireLecturer } = require('../middleware/auth.middleware');
 
@@ -17,5 +18,5 @@ router.get('/:courseId', authenticate, getCourseById);
 router.put('/:courseId', authenticate, requireLecturer, updateCourse);
 router.delete('/:courseId', authenticate, requireLecturer, deleteCourse);
 router.post('/:courseId/enroll', authenticate, enrollInCourse);
-
+router.get('/student/:studentId', authenticate, getCoursesByStudentId);
 module.exports = router;

@@ -1,4 +1,5 @@
 const prisma = require('../utils/prisma');
+const { checkAndIssueCertificate } = require('./certificate.controller');
 
 const updateProgress = async (req, res) => {
   try {
@@ -66,8 +67,28 @@ const updateProgress = async (req, res) => {
         completedAt: progressStatus === 'completed' ? new Date() : null,
       },
     });
+let certificate = null;
 
-    res.json(learningProgress);
+    // Chỉ kiểm tra khi user đã hoàn thành bài học này
+    if (progressStatus === 'completed') {
+      try {
+        certificate = await checkAndIssueCertificate(
+          userId,
+          lesson.module.course.courseId
+        );
+      } catch (certError) {
+        console.error("Auto-issue certificate failed:", certError);
+        // Không throw error để tránh làm lỗi luồng update progress chính
+      }
+    }
+    // ============================================================
+
+    // Trả về kết quả kèm thông tin chứng chỉ (nếu có)
+    res.json({
+      ...learningProgress,
+      certificateEarned: !!certificate, // true nếu vừa nhận được bằng
+      certificateData: certificate      // Dữ liệu bằng để hiển thị popup
+    });
   } catch (error) {
     console.error('Update progress error:', error);
     if (error.code === 'P2002') {

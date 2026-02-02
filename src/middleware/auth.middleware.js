@@ -1,5 +1,25 @@
 import jwt from 'jsonwebtoken';
 
+/** Optional auth: set req.userId if token valid, otherwise undefined. Never blocks. */
+export const optionalAuthenticate = (req, res, next) => {
+  try {
+    const token = req.cookies?.authToken || req.headers.authorization?.split(' ')[1];
+    if (token) {
+      const decoded = jwt.verify(token, process.env.JWT_SECRET || 'secret');
+      req.userId = decoded.userId;
+      req.userRoles = decoded.roles || [];
+    } else {
+      req.userId = undefined;
+      req.userRoles = [];
+    }
+    next();
+  } catch {
+    req.userId = undefined;
+    req.userRoles = [];
+    next();
+  }
+};
+
 export const authenticate = (req, res, next) => {
   try {
     // Try to get token from cookie first (primary method)

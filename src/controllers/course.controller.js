@@ -38,6 +38,10 @@ const getCourses = async (req, res) => {
     const userId = req.userId;
     const { enrolled } = req.query;
 
+    if (enrolled === 'true' && !userId) {
+      return res.status(401).json({ error: 'Login required to view enrolled courses' });
+    }
+
     let courses;
 
     if (enrolled === 'true') {
@@ -88,15 +92,19 @@ const getCourses = async (req, res) => {
           },
         },
       });
-      const userEnrollments = await prisma.enrollment.findMany({
-        where: { userId },
-        select: { courseId: true },
-      });
-      const enrolledCourseIds = new Set(userEnrollments.map((e) => e.courseId));
-      courses = courses.map((c) => ({
-        ...c,
-        isEnrolled: enrolledCourseIds.has(c.courseId),
-      }));
+
+      // Add isEnrolled when user is authenticated (guest: skip)
+      if (userId) {
+        const enrollments = await prisma.enrollment.findMany({
+          where: { userId },
+          select: { courseId: true },
+        });
+        const enrolledIds = new Set(enrollments.map((e) => e.courseId));
+        courses = courses.map((c) => ({
+          ...c,
+          isEnrolled: enrolledIds.has(c.courseId),
+        }));
+      }
     }
 
     res.json(courses);
@@ -115,6 +123,9 @@ const getCourseById = async (req, res) => {
     if (isNaN(courseIdInt)) {
       return res.status(400).json({ error: 'Invalid course ID' });
     }
+
+    // Guest (no login): return preview only - course info, no lesson content
+    const isGuest = !userId;
 
     const course = await prisma.course.findUnique({
       where: { courseId: courseIdInt },
@@ -153,6 +164,19 @@ const getCourseById = async (req, res) => {
 
     if (!course) {
       return res.status(404).json({ error: 'Course not found' });
+    }
+
+    // Guest: return preview only (no lesson content)
+    if (isGuest) {
+      const courseWithoutContent = {
+        ...course,
+        modules: course.modules.map(module => ({
+          ...module,
+          lessons: [],
+        })),
+        isEnrolled: false,
+      };
+      return res.json(courseWithoutContent);
     }
 
     const enrollment = await prisma.enrollment.findUnique({

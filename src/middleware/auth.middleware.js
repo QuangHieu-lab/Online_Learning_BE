@@ -1,5 +1,25 @@
 const jwt = require('jsonwebtoken');
 
+/** Optional auth: set req.userId if token valid, otherwise undefined. Never blocks. */
+const optionalAuthenticate = (req, res, next) => {
+  try {
+    const token = req.cookies?.authToken || req.headers.authorization?.split(' ')[1];
+    if (token) {
+      const decoded = jwt.verify(token, process.env.JWT_SECRET || 'secret');
+      req.userId = decoded.userId;
+      req.userRoles = decoded.roles || [];
+    } else {
+      req.userId = undefined;
+      req.userRoles = [];
+    }
+    next();
+  } catch {
+    req.userId = undefined;
+    req.userRoles = [];
+    next();
+  }
+};
+
 const authenticate = (req, res, next) => {
   try {
     const token = req.cookies?.authToken || req.headers.authorization?.split(' ')[1];
@@ -36,6 +56,7 @@ const requireAdmin = (req, res, next) => {
 
 module.exports = {
   authenticate,
+  optionalAuthenticate,
   requireLecturer,
   requireAdmin,
 };

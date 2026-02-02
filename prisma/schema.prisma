@@ -211,8 +211,8 @@ model Course {
   slug               String?        @unique
   description        String?        @db.Text
   category           CourseCategory
-  levelRequired      UserLevel      @default(A0) @map("level_required")
-  levelTarget        UserLevel      @map("level_target")
+  levelRequired      UserLevel?      @default(A0) @map("level_required")
+  levelTarget        UserLevel?      @map("level_target")
   proposedPrice      Decimal?       @map("proposed_price") @db.Decimal(10, 2)
   priceJustification String?        @map("price_justification") @db.Text
   price              Decimal        @default(0.00) @db.Decimal(10, 2)
@@ -413,6 +413,7 @@ model LearningProgress {
   enrollment Enrollment @relation(fields: [enrollmentId], references: [enrollmentId], onDelete: Cascade)
   lesson     Lesson     @relation(fields: [lessonId], references: [lessonId], onDelete: Cascade)
 
+  @@unique([enrollmentId, lessonId])
   @@map("learning_progress")
 }
 

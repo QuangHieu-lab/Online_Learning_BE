@@ -1,6 +1,15 @@
-import { Router } from 'express';
-import { register, login, googleSignIn, getMe, updateProfile, deleteOwnAccount, logout, refreshFromPayment } from '../controllers/auth.controller.js';
-import { authenticate } from '../middleware/auth.middleware.js';
+const { Router } = require('express');
+const {
+  register,
+  login,
+  googleSignIn,
+  getMe,
+  updateProfile,
+  deleteOwnAccount,
+  logout,
+  refreshFromPayment,
+} = require('../controllers/auth.controller');
+const { authenticate } = require('../middleware/auth.middleware');
 
 const router = Router();
 
@@ -13,4 +22,4 @@ router.put('/me', authenticate, updateProfile);
 router.delete('/me', authenticate, deleteOwnAccount);
 router.get('/refresh-from-payment', refreshFromPayment);
 
-export default router;
+module.exports = router;

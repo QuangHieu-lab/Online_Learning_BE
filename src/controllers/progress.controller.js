@@ -1,6 +1,6 @@
-import prisma from '../utils/prisma.js';
+const prisma = require('../utils/prisma');
 
-export const updateProgress = async (req, res) => {
+const updateProgress = async (req, res) => {
   try {
     const { lessonId } = req.params;
     const { status, lastWatchedSecond } = req.body;
@@ -113,7 +113,7 @@ export const updateProgress = async (req, res) => {
   }
 };
 
-export const getProgress = async (req, res) => {
+const getProgress = async (req, res) => {
   try {
     const { courseId } = req.params;
     const courseIdInt = parseInt(courseId);
@@ -151,7 +151,9 @@ export const getProgress = async (req, res) => {
       return res.status(404).json({ error: 'Course not found' });
     }
 
-    const allLessonIds = course.modules.flatMap(module => module.lessons.map(lesson => lesson.lessonId));
+    const allLessonIds = course.modules.flatMap((module) =>
+      module.lessons.map((lesson) => lesson.lessonId)
+    );
 
     const progressRecords = await prisma.learningProgress.findMany({
       where: {
@@ -174,7 +176,7 @@ export const getProgress = async (req, res) => {
       totalLessons,
       completedLessons,
       percentage: totalLessons > 0 ? Math.round((completedLessons / totalLessons) * 100) : 0,
-      modules: course.modules.map(module => ({
+      modules: course.modules.map((module) => ({
         moduleId: module.moduleId,
         moduleTitle: module.title,
         lessons: module.lessons.map((lesson) => {
@@ -197,7 +199,7 @@ export const getProgress = async (req, res) => {
   }
 };
 
-export const getUserProgress = async (req, res) => {
+const getUserProgress = async (req, res) => {
   try {
     const userId = req.userId;
 
@@ -219,7 +221,9 @@ export const getUserProgress = async (req, res) => {
 
     const progress = enrollments.map((enrollment) => {
       const course = enrollment.course;
-      const allLessonIds = course.modules.flatMap(module => module.lessons.map(lesson => lesson.lessonId));
+      const allLessonIds = course.modules.flatMap((module) =>
+        module.lessons.map((lesson) => lesson.lessonId)
+      );
       const completedLessons = enrollment.learningProgress.filter(
         (p) => p.status === 'completed'
       ).length;
@@ -232,9 +236,7 @@ export const getUserProgress = async (req, res) => {
         totalLessons,
         completedLessons,
         percentage:
-          totalLessons > 0
-            ? Math.round((completedLessons / totalLessons) * 100)
-            : 0,
+          totalLessons > 0 ? Math.round((completedLessons / totalLessons) * 100) : 0,
       };
     });
 
@@ -243,4 +245,10 @@ export const getUserProgress = async (req, res) => {
     console.error('Get user progress error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
+};
+
+module.exports = {
+  updateProgress,
+  getProgress,
+  getUserProgress,
 };

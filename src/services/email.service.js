@@ -1,11 +1,7 @@
-import nodemailer from 'nodemailer';
-import dotenv from 'dotenv';
+const nodemailer = require('nodemailer');
+require('dotenv').config();
 
-dotenv.config();
-
-// Create transporter for sending emails
 const createTransporter = () => {
-  // Support both EMAIL_* and SMTP_* variables (SMTP_* as fallback)
   const emailHost = process.env.EMAIL_HOST || process.env.SMTP_HOST;
   const emailPort = process.env.EMAIL_PORT || process.env.SMTP_PORT;
   const emailUser = process.env.EMAIL_USER || process.env.SMTP_USER;
@@ -25,7 +21,7 @@ const createTransporter = () => {
   return nodemailer.createTransport({
     host: emailHost,
     port: port,
-    secure: isSecure, // true for 465, false for other ports
+    secure: isSecure,
     auth: {
       user: emailUser,
       pass: emailPassword,
@@ -35,17 +31,13 @@ const createTransporter = () => {
 
 const transporter = createTransporter();
 
-/**
- * Send email notification
- */
-export const sendEmail = async (to, subject, html, text) => {
+const sendEmail = async (to, subject, html, text) => {
   if (!transporter) {
     console.warn('Email service not configured. Email would be sent to:', { to, subject });
     return { success: false, message: 'Email service not configured' };
   }
 
   try {
-    // Support both EMAIL_FROM and SMTP_FROM
     const fromEmail = process.env.EMAIL_FROM || process.env.SMTP_FROM || process.env.EMAIL_USER || process.env.SMTP_USER || 'noreply@example.com';
     const fromName = process.env.EMAIL_FROM_NAME || 'E-Learning Platform';
 
@@ -53,7 +45,7 @@ export const sendEmail = async (to, subject, html, text) => {
       from: `"${fromName}" <${fromEmail}>`,
       to,
       subject,
-      text: text || html.replace(/<[^>]*>/g, ''), // Strip HTML for text version
+      text: text || html.replace(/<[^>]*>/g, ''),
       html,
     });
 
@@ -65,10 +57,7 @@ export const sendEmail = async (to, subject, html, text) => {
   }
 };
 
-/**
- * Send login notification email
- */
-export const sendLoginNotification = async (email, name, loginMethod, timestamp = new Date()) => {
+const sendLoginNotification = async (email, name, loginMethod, timestamp = new Date()) => {
   const loginTime = timestamp.toLocaleString('vi-VN', {
     year: 'numeric',
     month: 'long',
@@ -85,53 +74,18 @@ export const sendLoginNotification = async (email, name, loginMethod, timestamp 
     <head>
       <meta charset="UTF-8">
       <style>
-        body {
-          font-family: Arial, sans-serif;
-          line-height: 1.6;
-          color: #333;
-          max-width: 600px;
-          margin: 0 auto;
-          padding: 20px;
-        }
-        .header {
-          background-color: #4CAF50;
-          color: white;
-          padding: 20px;
-          text-align: center;
-          border-radius: 5px 5px 0 0;
-        }
-        .content {
-          background-color: #f9f9f9;
-          padding: 20px;
-          border-radius: 0 0 5px 5px;
-        }
-        .info-box {
-          background-color: white;
-          padding: 15px;
-          border-left: 4px solid #4CAF50;
-          margin: 15px 0;
-        }
-        .footer {
-          text-align: center;
-          margin-top: 20px;
-          color: #666;
-          font-size: 12px;
-        }
-        .warning {
-          background-color: #fff3cd;
-          border-left: 4px solid #ffc107;
-          padding: 15px;
-          margin: 15px 0;
-        }
+        body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px; }
+        .header { background-color: #4CAF50; color: white; padding: 20px; text-align: center; border-radius: 5px 5px 0 0; }
+        .content { background-color: #f9f9f9; padding: 20px; border-radius: 0 0 5px 5px; }
+        .info-box { background-color: white; padding: 15px; border-left: 4px solid #4CAF50; margin: 15px 0; }
+        .footer { text-align: center; margin-top: 20px; color: #666; font-size: 12px; }
+        .warning { background-color: #fff3cd; border-left: 4px solid #ffc107; padding: 15px; margin: 15px 0; }
       </style>
     </head>
     <body>
-      <div class="header">
-        <h1>🔐 Thông báo đăng nhập</h1>
-      </div>
+      <div class="header"><h1>🔐 Thông báo đăng nhập</h1></div>
       <div class="content">
         <p>Xin chào <strong>${name}</strong>,</p>
-        
         <div class="info-box">
           <p><strong>Thông tin đăng nhập:</strong></p>
           <ul>
@@ -140,17 +94,10 @@ export const sendLoginNotification = async (email, name, loginMethod, timestamp 
             <li><strong>Thời gian:</strong> ${loginTime}</li>
           </ul>
         </div>
-
         <div class="warning">
           <p><strong>⚠️ Lưu ý bảo mật:</strong></p>
-          <p>Nếu bạn không thực hiện đăng nhập này, vui lòng:</p>
-          <ol>
-            <li>Đổi mật khẩu ngay lập tức</li>
-            <li>Liên hệ với bộ phận hỗ trợ</li>
-            <li>Kiểm tra các hoạt động đăng nhập gần đây</li>
-          </ol>
+          <p>Nếu bạn không thực hiện đăng nhập này, vui lòng đổi mật khẩu ngay lập tức.</p>
         </div>
-
         <p>Trân trọng,<br><strong>Đội ngũ E-Learning Platform</strong></p>
       </div>
       <div class="footer">
@@ -164,10 +111,7 @@ export const sendLoginNotification = async (email, name, loginMethod, timestamp 
   await sendEmail(email, subject, html);
 };
 
-/**
- * Send welcome email with generated password (for first-time Google sign-in)
- */
-export const sendWelcomeWithPassword = async (email, fullName, password, timestamp = new Date()) => {
+const sendWelcomeWithPassword = async (email, fullName, password, timestamp = new Date()) => {
   const signupTime = timestamp.toLocaleString('vi-VN', {
     year: 'numeric',
     month: 'long',
@@ -184,71 +128,24 @@ export const sendWelcomeWithPassword = async (email, fullName, password, timesta
     <head>
       <meta charset="UTF-8">
       <style>
-        body {
-          font-family: Arial, sans-serif;
-          line-height: 1.6;
-          color: #333;
-          max-width: 600px;
-          margin: 0 auto;
-          padding: 20px;
-        }
-        .header {
-          background-color: #2196F3;
-          color: white;
-          padding: 20px;
-          text-align: center;
-          border-radius: 5px 5px 0 0;
-        }
-        .content {
-          background-color: #f9f9f9;
-          padding: 20px;
-          border-radius: 0 0 5px 5px;
-        }
-        .password-box {
-          background-color: #e3f2fd;
-          border: 2px solid #2196F3;
-          padding: 20px;
-          margin: 20px 0;
-          border-radius: 8px;
-          font-size: 18px;
-          font-family: monospace;
-          letter-spacing: 2px;
-          text-align: center;
-        }
-        .info-box {
-          background-color: white;
-          padding: 15px;
-          border-left: 4px solid #2196F3;
-          margin: 15px 0;
-        }
-        .footer {
-          text-align: center;
-          margin-top: 20px;
-          color: #666;
-          font-size: 12px;
-        }
-        .warning {
-          background-color: #fff3cd;
-          border-left: 4px solid #ffc107;
-          padding: 15px;
-          margin: 15px 0;
-        }
+        body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px; }
+        .header { background-color: #2196F3; color: white; padding: 20px; text-align: center; border-radius: 5px 5px 0 0; }
+        .content { background-color: #f9f9f9; padding: 20px; border-radius: 0 0 5px 5px; }
+        .password-box { background-color: #e3f2fd; border: 2px solid #2196F3; padding: 20px; margin: 20px 0; border-radius: 8px; font-size: 18px; font-family: monospace; letter-spacing: 2px; text-align: center; }
+        .info-box { background-color: white; padding: 15px; border-left: 4px solid #2196F3; margin: 15px 0; }
+        .footer { text-align: center; margin-top: 20px; color: #666; font-size: 12px; }
+        .warning { background-color: #fff3cd; border-left: 4px solid #ffc107; padding: 15px; margin: 15px 0; }
       </style>
     </head>
     <body>
-      <div class="header">
-        <h1>🎉 Chào mừng bạn đến với E-Learning Platform</h1>
-      </div>
+      <div class="header"><h1>🎉 Chào mừng bạn đến với E-Learning Platform</h1></div>
       <div class="content">
         <p>Xin chào <strong>${fullName}</strong>,</p>
-        
-        <p>Bạn đã đăng ký tài khoản thành công bằng Google. Chúng tôi đã tạo mật khẩu cho bạn để bạn có thể đăng nhập bằng email khi cần.</p>
-        
+        <p>Bạn đã đăng ký tài khoản thành công bằng Google. Chúng tôi đã tạo mật khẩu cho bạn.</p>
         <div class="password-box">
           <p style="margin: 0 0 8px 0; font-size: 14px; color: #666;">Mật khẩu của bạn:</p>
           <strong>${password}</strong>
         </div>
-
         <div class="info-box">
           <p><strong>Thông tin tài khoản:</strong></p>
           <ul>
@@ -256,17 +153,10 @@ export const sendWelcomeWithPassword = async (email, fullName, password, timesta
             <li><strong>Thời gian đăng ký:</strong> ${signupTime}</li>
           </ul>
         </div>
-
         <div class="warning">
           <p><strong>⚠️ Lưu ý bảo mật:</strong></p>
-          <p>Vui lòng đổi mật khẩu sau lần đăng nhập đầu tiên nếu bạn muốn. Bạn có thể đăng nhập bằng:</p>
-          <ul>
-            <li>Email + mật khẩu (như trên)</li>
-            <li>Google Sign-In</li>
-          </ul>
-          <p>Không chia sẻ mật khẩu này với bất kỳ ai.</p>
+          <p>Vui lòng đổi mật khẩu sau lần đăng nhập đầu tiên nếu bạn muốn.</p>
         </div>
-
         <p>Trân trọng,<br><strong>Đội ngũ E-Learning Platform</strong></p>
       </div>
       <div class="footer">
@@ -278,4 +168,10 @@ export const sendWelcomeWithPassword = async (email, fullName, password, timesta
   `;
 
   await sendEmail(email, subject, html);
+};
+
+module.exports = {
+  sendEmail,
+  sendLoginNotification,
+  sendWelcomeWithPassword,
 };

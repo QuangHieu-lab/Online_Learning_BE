@@ -1,21 +1,21 @@
-import { Router } from 'express';
-import {
+const { Router } = require('express');
+const {
   createQuiz,
   getQuizzes,
   getQuizById,
   updateQuiz,
   deleteQuiz,
   submitQuiz,
-} from '../controllers/quiz.controller.js';
-import {
+} = require('../controllers/quiz.controller');
+const {
   createQuestion,
   updateQuestion,
   deleteQuestion,
   createAnswer,
   updateAnswer,
   deleteAnswer,
-} from '../controllers/question.controller.js';
-import { authenticate, requireLecturer } from '../middleware/auth.middleware.js';
+} = require('../controllers/question.controller');
+const { authenticate, requireLecturer } = require('../middleware/auth.middleware');
 
 const router = Router();
 
@@ -34,4 +34,4 @@ router.post('/questions/:questionId/answers', authenticate, requireLecturer, cre
 router.put('/answers/:answerId', authenticate, requireLecturer, updateAnswer);
 router.delete('/answers/:answerId', authenticate, requireLecturer, deleteAnswer);
 
-export default router;
+module.exports = router;

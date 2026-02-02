@@ -1,7 +1,7 @@
-import prisma from '../utils/prisma.js';
-import bcrypt from 'bcrypt';
+const prisma = require('../utils/prisma');
+const bcrypt = require('bcrypt');
 
-export const getAllUsers = async (req, res) => {
+const getAllUsers = async (req, res) => {
   try {
     const users = await prisma.user.findMany({
       include: {
@@ -14,7 +14,6 @@ export const getAllUsers = async (req, res) => {
           select: {
             coursesAsInstructor: true,
             enrollments: true,
-            quizAttempts: true,
           },
         },
       },
@@ -23,11 +22,11 @@ export const getAllUsers = async (req, res) => {
       },
     });
 
-    const usersWithRoles = users.map(user => ({
+    const usersWithRoles = users.map((user) => ({
       userId: user.userId,
       email: user.email,
       fullName: user.fullName,
-      roles: user.userRoles.map(ur => ur.role.roleName),
+      roles: user.userRoles.map((ur) => ur.role.roleName),
       createdAt: user.createdAt,
       updatedAt: user.updatedAt,
       _count: user._count,
@@ -40,7 +39,7 @@ export const getAllUsers = async (req, res) => {
   }
 };
 
-export const getUserById = async (req, res) => {
+const getUserById = async (req, res) => {
   try {
     const { userId } = req.params;
     const userIdInt = parseInt(userId);
@@ -80,7 +79,6 @@ export const getUserById = async (req, res) => {
           select: {
             coursesAsInstructor: true,
             enrollments: true,
-            quizAttempts: true,
           },
         },
       },
@@ -94,7 +92,7 @@ export const getUserById = async (req, res) => {
       userId: user.userId,
       email: user.email,
       fullName: user.fullName,
-      roles: user.userRoles.map(ur => ur.role.roleName),
+      roles: user.userRoles.map((ur) => ur.role.roleName),
       createdAt: user.createdAt,
       updatedAt: user.updatedAt,
       coursesAsInstructor: user.coursesAsInstructor,
@@ -107,7 +105,7 @@ export const getUserById = async (req, res) => {
   }
 };
 
-export const updateUser = async (req, res) => {
+const updateUser = async (req, res) => {
   try {
     const { userId } = req.params;
     const userIdInt = parseInt(userId);
@@ -134,7 +132,7 @@ export const updateUser = async (req, res) => {
       });
 
       updateData.userRoles = {
-        create: roleRecords.map(role => ({
+        create: roleRecords.map((role) => ({
           roleId: role.roleId,
         })),
       };
@@ -156,7 +154,7 @@ export const updateUser = async (req, res) => {
       userId: user.userId,
       email: user.email,
       fullName: user.fullName,
-      roles: user.userRoles.map(ur => ur.role.roleName),
+      roles: user.userRoles.map((ur) => ur.role.roleName),
       createdAt: user.createdAt,
       updatedAt: user.updatedAt,
     });
@@ -169,7 +167,7 @@ export const updateUser = async (req, res) => {
   }
 };
 
-export const deleteUser = async (req, res) => {
+const deleteUser = async (req, res) => {
   try {
     const { userId } = req.params;
     const userIdInt = parseInt(userId);
@@ -194,7 +192,7 @@ export const deleteUser = async (req, res) => {
   }
 };
 
-export const createUser = async (req, res) => {
+const createUser = async (req, res) => {
   try {
     const { email, password, name, roles } = req.body;
 
@@ -220,7 +218,7 @@ export const createUser = async (req, res) => {
         passwordHash: hashedPassword,
         fullName: name,
         userRoles: {
-          create: roleRecords.map(role => ({
+          create: roleRecords.map((role) => ({
             roleId: role.roleId,
           })),
         },
@@ -238,7 +236,7 @@ export const createUser = async (req, res) => {
       userId: user.userId,
       email: user.email,
       fullName: user.fullName,
-      roles: user.userRoles.map(ur => ur.role.roleName),
+      roles: user.userRoles.map((ur) => ur.role.roleName),
       createdAt: user.createdAt,
     });
   } catch (error) {
@@ -248,4 +246,12 @@ export const createUser = async (req, res) => {
     }
     res.status(500).json({ error: 'Internal server error' });
   }
+};
+
+module.exports = {
+  getAllUsers,
+  getUserById,
+  updateUser,
+  deleteUser,
+  createUser,
 };

@@ -1,6 +1,6 @@
-import prisma from '../utils/prisma.js';
+const prisma = require('../utils/prisma');
 
-export const createQuestion = async (req, res) => {
+const createQuestion = async (req, res) => {
   try {
     const { quizId } = req.params;
     const quizIdInt = parseInt(quizId);
@@ -56,7 +56,7 @@ export const createQuestion = async (req, res) => {
   }
 };
 
-export const updateQuestion = async (req, res) => {
+const updateQuestion = async (req, res) => {
   try {
     const { questionId } = req.params;
     const questionIdInt = parseInt(questionId);
@@ -113,7 +113,7 @@ export const updateQuestion = async (req, res) => {
   }
 };
 
-export const deleteQuestion = async (req, res) => {
+const deleteQuestion = async (req, res) => {
   try {
     const { questionId } = req.params;
     const questionIdInt = parseInt(questionId);
@@ -161,7 +161,7 @@ export const deleteQuestion = async (req, res) => {
   }
 };
 
-export const createAnswer = async (req, res) => {
+const createAnswer = async (req, res) => {
   try {
     const { questionId } = req.params;
     const questionIdInt = parseInt(questionId);
@@ -215,7 +215,7 @@ export const createAnswer = async (req, res) => {
   }
 };
 
-export const updateAnswer = async (req, res) => {
+const updateAnswer = async (req, res) => {
   try {
     const { answerId } = req.params;
     const answerIdInt = parseInt(answerId);
@@ -273,7 +273,7 @@ export const updateAnswer = async (req, res) => {
   }
 };
 
-export const deleteAnswer = async (req, res) => {
+const deleteAnswer = async (req, res) => {
   try {
     const { answerId } = req.params;
     const answerIdInt = parseInt(answerId);
@@ -323,4 +323,13 @@ export const deleteAnswer = async (req, res) => {
     console.error('Delete answer error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
+};
+
+module.exports = {
+  createQuestion,
+  updateQuestion,
+  deleteQuestion,
+  createAnswer,
+  updateAnswer,
+  deleteAnswer,
 };

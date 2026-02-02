@@ -1,12 +1,12 @@
-import { Router } from 'express';
-import {
+const { Router } = require('express');
+const {
   createLesson,
   getLessons,
   getLessonById,
   updateLesson,
   deleteLesson,
-} from '../controllers/lesson.controller.js';
-import { authenticate, requireLecturer } from '../middleware/auth.middleware.js';
+} = require('../controllers/lesson.controller');
+const { authenticate, requireLecturer } = require('../middleware/auth.middleware');
 
 const router = Router();
 
@@ -16,4 +16,4 @@ router.get('/:lessonId', authenticate, getLessonById);
 router.put('/:lessonId', authenticate, requireLecturer, updateLesson);
 router.delete('/:lessonId', authenticate, requireLecturer, deleteLesson);
 
-export default router;
+module.exports = router;

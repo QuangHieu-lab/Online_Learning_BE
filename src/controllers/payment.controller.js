@@ -1,10 +1,14 @@
-import jwt from 'jsonwebtoken';
-import prisma from '../utils/prisma.js';
-import { createVNPayPaymentUrl, verifyVNPayCallback, getVNPayResponseMessage } from '../services/vnpay.service.js';
-import { getCookieOptions } from '../utils/cookie.utils.js';
-import { v4 as uuidv4 } from 'uuid';
+const jwt = require('jsonwebtoken');
+const prisma = require('../utils/prisma');
+const {
+  createVNPayPaymentUrl,
+  verifyVNPayCallback,
+  getVNPayResponseMessage,
+} = require('../services/vnpay.service');
+const { getCookieOptions } = require('../utils/cookie.utils');
+const crypto = require('crypto');
 
-export const createPayment = async (req, res) => {
+const createPayment = async (req, res) => {
   try {
     const { courseId } = req.body;
     const userId = req.userId;
@@ -61,7 +65,7 @@ export const createPayment = async (req, res) => {
       }
     }
 
-    const vnpayTxnRef = uuidv4().replace(/-/g, '').substring(0, 40);
+    const vnpayTxnRef = crypto.randomUUID().replace(/-/g, '') + crypto.randomBytes(4).toString('hex');
 
     const order = await prisma.order.create({
       data: {
@@ -88,7 +92,8 @@ export const createPayment = async (req, res) => {
       },
     });
 
-    const clientIp = req.ip || req.headers['x-forwarded-for'] || req.connection?.remoteAddress || '127.0.0.1';
+    const clientIp =
+      req.ip || req.headers['x-forwarded-for'] || req.connection?.remoteAddress || '127.0.0.1';
     const paymentUrl = createVNPayPaymentUrl({
       amount: Number(course.price),
       orderId: vnpayTxnRef,
@@ -119,7 +124,7 @@ export const createPayment = async (req, res) => {
   }
 };
 
-export const vnpayReturn = async (req, res) => {
+const vnpayReturn = async (req, res) => {
   try {
     const queryParams = {};
     for (const [key, value] of Object.entries(req.query)) {
@@ -221,7 +226,7 @@ export const vnpayReturn = async (req, res) => {
       }
 
       if (order.user) {
-        const roles = order.user.userRoles.map(ur => ur.role.roleName);
+        const roles = order.user.userRoles.map((ur) => ur.role.roleName);
         const token = jwt.sign(
           { userId: order.user.userId, roles },
           process.env.JWT_SECRET || 'secret',
@@ -249,7 +254,7 @@ export const vnpayReturn = async (req, res) => {
   }
 };
 
-export const getPaymentStatus = async (req, res) => {
+const getPaymentStatus = async (req, res) => {
   try {
     const { orderId } = req.params;
     const orderIdInt = parseInt(orderId);
@@ -294,10 +299,16 @@ export const getPaymentStatus = async (req, res) => {
       status: order.status,
       totalAmount: order.totalAmount,
       transaction: order.transaction,
-      courses: order.orderDetails.map(od => od.course),
+      courses: order.orderDetails.map((od) => od.course),
     });
   } catch (error) {
     console.error('Get payment status error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
+};
+
+module.exports = {
+  createPayment,
+  vnpayReturn,
+  getPaymentStatus,
 };

@@ -1,10 +1,10 @@
-import { Router } from 'express';
-import {
+const { Router } = require('express');
+const {
   updateProgress,
   getProgress,
   getUserProgress,
-} from '../controllers/progress.controller.js';
-import { authenticate } from '../middleware/auth.middleware.js';
+} = require('../controllers/progress.controller');
+const { authenticate } = require('../middleware/auth.middleware');
 
 const router = Router();
 
@@ -12,4 +12,4 @@ router.post('/lessons/:lessonId', authenticate, updateProgress);
 router.get('/courses/:courseId', authenticate, getProgress);
 router.get('/user', authenticate, getUserProgress);
 
-export default router;
+module.exports = router;

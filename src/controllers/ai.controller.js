@@ -1,13 +1,13 @@
-import prisma from '../utils/prisma.js';
-import {
+const prisma = require('../utils/prisma');
+const {
   generateQuizFromContent,
   getAITutorResponse,
   getStructuredTutorResponse,
   getAIHint,
   analyzeKnowledgeGaps,
-} from '../services/gemini.service.js';
+} = require('../services/gemini.service');
 
-export const generateQuiz = async (req, res) => {
+const generateQuiz = async (req, res) => {
   try {
     const { lessonId } = req.params;
     const { numQuestions } = req.body;
@@ -51,37 +51,32 @@ export const generateQuiz = async (req, res) => {
     });
   } catch (error) {
     console.error('Generate quiz error:', error);
-
-    if (error.isRateLimit) {
+    const customError = error;
+    if (customError.isRateLimit) {
       return res.status(429).json({
-        error: error.message || 'Hệ thống AI đang bận một chút, bạn vui lòng đợi một lúc rồi thử lại nhé!',
-        retryAfter: error.retryAfter,
+        error: customError.message || 'Hệ thống AI đang bận một chút, bạn vui lòng đợi một lúc rồi thử lại nhé!',
+        retryAfter: customError.retryAfter,
       });
     }
-
-    const statusCode = error.statusCode || 500;
-    const errorMessage = error.message || 'Failed to generate quiz';
+    const statusCode = customError.statusCode || 500;
+    const errorMessage = customError.message || 'Failed to generate quiz';
     res.status(statusCode).json({ error: errorMessage });
   }
 };
 
-export const chatWithTutor = async (req, res) => {
+const chatWithTutor = async (req, res) => {
   try {
     const { lessonId } = req.params;
     const { message } = req.body;
     const userId = req.userId;
     const lessonIdInt = lessonId ? parseInt(lessonId) : null;
 
-    const msg = typeof message === 'string' ? message.trim() : '';
-    if (!msg) {
-      return res.status(400).json({ error: 'Vui lòng nhập câu hỏi (message không được để trống)' });
+    if (!message) {
+      return res.status(400).json({ error: 'Message is required' });
     }
 
     let lessonContent = '';
     let structuredData = null;
-
-    // Use validated message
-    const validatedMessage = msg;
 
     if (lessonIdInt && !isNaN(lessonIdInt)) {
       const lesson = await prisma.lesson.findUnique({
@@ -122,7 +117,7 @@ ${lesson.contentText || ''}
 ${quizContent ? `\nQuizzes:\n${quizContent}` : ''}
         `.trim();
 
-        structuredData = await getStructuredTutorResponse(validatedMessage, lessonContent);
+        structuredData = await getStructuredTutorResponse(message, lessonContent);
       }
     }
 
@@ -130,14 +125,14 @@ ${quizContent ? `\nQuizzes:\n${quizContent}` : ''}
     if (structuredData) {
       aiResponse = `Gợi ý:\n${structuredData.hints}\n\nBài tập:\n${structuredData.exercises.map((ex, i) => `${i + 1}. ${ex.question}`).join('\n')}\n\nLời giải chi tiết:\n${structuredData.solution}`;
     } else {
-      aiResponse = await getAITutorResponse(validatedMessage, lessonContent ? lessonContent : undefined) ?? '';
+      aiResponse = (await getAITutorResponse(message, lessonContent ? lessonContent : undefined)) ?? '';
     }
 
     const chat = await prisma.aITutorChat.create({
       data: {
         userId,
         lessonId: lessonIdInt,
-        userQuery: validatedMessage,
+        userQuery: message,
         aiResponse,
         tokensUsed: 0,
       },
@@ -155,24 +150,23 @@ ${quizContent ? `\nQuizzes:\n${quizContent}` : ''}
     res.json(responsePayload);
   } catch (error) {
     console.error('Chat with tutor error:', error);
-
-    if (error.isRateLimit) {
+    const customError = error;
+    if (customError.isRateLimit) {
       return res.status(429).json({
-        error: error.message || 'Hệ thống AI đang bận một chút, bạn vui lòng đợi một lúc rồi thử lại nhé!',
-        retryAfter: error.retryAfter,
+        error: customError.message || 'Hệ thống AI đang bận một chút, bạn vui lòng đợi một lúc rồi thử lại nhé!',
+        retryAfter: customError.retryAfter,
       });
     }
-
-    const statusCode = error.statusCode || 500;
-    const errorMessage = error.message || 'Failed to get AI response';
+    const statusCode = customError.statusCode || 500;
+    const errorMessage = customError.message || 'Failed to get AI response';
     res.status(statusCode).json({ error: errorMessage });
   }
 };
 
-export const getHint = async (req, res) => {
+const getHint = async (req, res) => {
   try {
-    const { submissionId, questionId } = req.params;
-    const attemptIdInt = parseInt(submissionId);
+    const { submissionId: attemptId, questionId } = req.params;
+    const attemptIdInt = parseInt(attemptId);
     const questionIdInt = parseInt(questionId);
     const userId = req.userId;
 
@@ -243,28 +237,27 @@ export const getHint = async (req, res) => {
     const hint = await getAIHint(
       question.contentText,
       userAnswer?.contentText || attemptAnswer.textResponse || '',
-      correctAnswer.contentText,
+      correctAnswer.contentText || '',
       lessonContent
     );
 
     res.json({ hint });
   } catch (error) {
     console.error('Get hint error:', error);
-
-    if (error.isRateLimit) {
+    const customError = error;
+    if (customError.isRateLimit) {
       return res.status(429).json({
-        error: error.message || 'Hệ thống AI đang bận một chút, bạn vui lòng đợi một lúc rồi thử lại nhé!',
-        retryAfter: error.retryAfter,
+        error: customError.message || 'Hệ thống AI đang bận một chút, bạn vui lòng đợi một lúc rồi thử lại nhé!',
+        retryAfter: customError.retryAfter,
       });
     }
-
-    const statusCode = error.statusCode || 500;
-    const errorMessage = error.message || 'Failed to get hint';
+    const statusCode = customError.statusCode || 500;
+    const errorMessage = customError.message || 'Failed to get hint';
     res.status(statusCode).json({ error: errorMessage });
   }
 };
 
-export const getKnowledgeGaps = async (req, res) => {
+const getKnowledgeGaps = async (req, res) => {
   try {
     const { userId: targetUserId } = req.params;
     const targetUserIdInt = parseInt(targetUserId);
@@ -285,7 +278,7 @@ export const getKnowledgeGaps = async (req, res) => {
       },
     });
 
-    const userRoles = user?.userRoles.map(ur => ur.role.roleName) || [];
+    const userRoles = user?.userRoles.map((ur) => ur.role.roleName) || [];
     const isInstructor = userRoles.includes('instructor') || userRoles.includes('admin');
 
     if (!isInstructor && userId !== targetUserIdInt) {
@@ -310,18 +303,18 @@ export const getKnowledgeGaps = async (req, res) => {
                 },
               },
             },
-          },
-          quizAttemptAnswers: {
-            include: {
-              question: true,
-              selectedAnswer: true,
+            quizAttemptAnswers: {
+              include: {
+                question: true,
+                selectedAnswer: true,
+              },
             },
           },
         },
       },
     });
 
-    const allAttempts = enrollments.flatMap(e => e.quizAttempts);
+    const allAttempts = enrollments.flatMap((e) => e.quizAttempts);
 
     if (allAttempts.length === 0) {
       return res.json({
@@ -337,12 +330,12 @@ export const getKnowledgeGaps = async (req, res) => {
       `
       : undefined;
 
-    const submissions = allAttempts.map(attempt => ({
+    const submissions = allAttempts.map((attempt) => ({
       id: attempt.attemptId.toString(),
       userId: attempt.enrollment.userId.toString(),
       quizId: attempt.quizId.toString(),
       score: attempt.totalScore ? Number(attempt.totalScore) : null,
-      answers: attempt.quizAttemptAnswers.map(aa => ({
+      answers: attempt.quizAttemptAnswers.map((aa) => ({
         questionId: aa.questionId.toString(),
         answerId: aa.selectedAnswerId?.toString(),
         content: aa.textResponse,
@@ -350,11 +343,12 @@ export const getKnowledgeGaps = async (req, res) => {
           id: aa.question.questionId.toString(),
           content: aa.question.contentText,
         },
-        answer: aa.selectedAnswer ? {
-          id: aa.selectedAnswer.answerId.toString(),
-          content: aa.selectedAnswer.contentText,
-          isCorrect: aa.selectedAnswer.isCorrect,
-        } : null,
+        answer: aa.selectedAnswer
+          ? {
+              id: aa.selectedAnswer.answerId.toString(),
+              content: aa.selectedAnswer.contentText,
+            }
+          : null,
       })),
       quiz: {
         lesson: {
@@ -369,18 +363,24 @@ export const getKnowledgeGaps = async (req, res) => {
     res.json(analysis);
   } catch (error) {
     console.error('Get knowledge gaps error:', error);
-
-    if (error.isRateLimit) {
+    const customError = error;
+    if (customError.isRateLimit) {
       return res.status(429).json({
-        error: error.message || 'Hệ thống AI đang bận một chút, bạn vui lòng đợi một lúc rồi thử lại nhé!',
-        retryAfter: error.retryAfter,
+        error: customError.message || 'Hệ thống AI đang bận một chút, bạn vui lòng đợi một lúc rồi thử lại nhé!',
+        retryAfter: customError.retryAfter,
         gaps: [],
         overall: 'Không thể phân tích lỗ hổng kiến thức vào lúc này. Vui lòng thử lại sau.',
       });
     }
-
-    const statusCode = error.statusCode || 500;
-    const errorMessage = error.message || 'Failed to analyze knowledge gaps';
+    const statusCode = customError.statusCode || 500;
+    const errorMessage = customError.message || 'Failed to analyze knowledge gaps';
     res.status(statusCode).json({ error: errorMessage });
   }
+};
+
+module.exports = {
+  generateQuiz,
+  chatWithTutor,
+  getHint,
+  getKnowledgeGaps,
 };

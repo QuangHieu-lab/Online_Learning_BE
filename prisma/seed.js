@@ -1,9 +1,8 @@
-import { PrismaClient } from '@prisma/client';
-import bcrypt from 'bcrypt';
+const { PrismaClient } = require('@prisma/client');
+const bcrypt = require('bcrypt');
 
 const prisma = new PrismaClient();
 
-// Sample questions for quizzes
 const sampleQuestions10 = [
   {
     contentText: 'What is the capital of France?',
@@ -97,7 +96,6 @@ const sampleQuestions10 = [
   },
 ];
 
-// IELTS-specific questions
 const ieltsListeningQuestions = [
   {
     contentText: 'In IELTS Listening, how many sections are there?',
@@ -170,14 +168,7 @@ const ieltsWritingQuestions = [
   },
 ];
 
-// Helper function to create quiz with questions
-async function createQuizWithQuestions(
-  lessonId,
-  title,
-  timeLimitMinutes,
-  passingScore,
-  questions
-) {
+async function createQuizWithQuestions(lessonId, title, timeLimitMinutes, passingScore, questions) {
   const quiz = await prisma.quiz.create({
     data: {
       lessonId,
@@ -208,10 +199,8 @@ async function createQuizWithQuestions(
 async function main() {
   console.log('🌱 Seeding database...\n');
 
-  // Hash password for all users
   const hashedPassword = await bcrypt.hash('password123', 10);
 
-  // Step 1: Create roles
   console.log('📋 Creating roles...');
   const studentRole = await prisma.role.upsert({
     where: { roleName: 'student' },
@@ -241,10 +230,8 @@ async function main() {
   });
   console.log('✅ Roles created\n');
 
-  // Step 2: Create users with user_roles
   console.log('👥 Creating users...');
-  
-  // Admin user
+
   const admin = await prisma.user.upsert({
     where: { email: 'admin@example.com' },
     update: {},
@@ -262,7 +249,6 @@ async function main() {
   });
   console.log('  ✅ Admin:', admin.email);
 
-  // Instructor users
   const lecturer1 = await prisma.user.upsert({
     where: { email: 'lecturer@example.com' },
     update: {},
@@ -297,7 +283,6 @@ async function main() {
   });
   console.log('  ✅ Instructor 2:', lecturer2.email);
 
-  // Student users
   const student1 = await prisma.user.upsert({
     where: { email: 'student@example.com' },
     update: {},
@@ -350,13 +335,12 @@ async function main() {
   console.log('  ✅ Student 3:', student3.email);
   console.log('');
 
-  // Step 3: Create FREE courses
   console.log('📚 Creating FREE courses...');
-  
+
   const freeCourse1 = await prisma.course.create({
     data: {
       title: 'Introduction to Web Development',
-      description: 'Learn the fundamentals of web development including HTML, CSS, JavaScript, and modern frameworks. Perfect for beginners who want to start their journey in web development.',
+      description: 'Learn the fundamentals of web development including HTML, CSS, JavaScript, and modern frameworks.',
       price: 0,
       instructorId: lecturer1.userId,
       category: 'Communication',
@@ -370,18 +354,8 @@ async function main() {
             orderIndex: 0,
             lessons: {
               create: [
-                {
-                  title: 'Introduction to HTML',
-                  type: 'video',
-                  orderIndex: 1,
-                  contentText: 'HTML is the foundation of web development. Learn about tags, elements, and structure.',
-                },
-                {
-                  title: 'HTML Forms and Input',
-                  type: 'video',
-                  orderIndex: 2,
-                  contentText: 'Create interactive forms with various input types.',
-                },
+                { title: 'Introduction to HTML', type: 'video', orderIndex: 1, contentText: 'HTML is the foundation of web development.' },
+                { title: 'HTML Forms and Input', type: 'video', orderIndex: 2, contentText: 'Create interactive forms with various input types.' },
               ],
             },
           },
@@ -391,18 +365,8 @@ async function main() {
             orderIndex: 1,
             lessons: {
               create: [
-                {
-                  title: 'CSS Basics',
-                  type: 'video',
-                  orderIndex: 1,
-                  contentText: 'Learn about selectors, properties, and values.',
-                },
-                {
-                  title: 'CSS Layouts',
-                  type: 'video',
-                  orderIndex: 2,
-                  contentText: 'Flexbox and Grid for modern layouts.',
-                },
+                { title: 'CSS Basics', type: 'video', orderIndex: 1, contentText: 'Learn about selectors, properties, and values.' },
+                { title: 'CSS Layouts', type: 'video', orderIndex: 2, contentText: 'Flexbox and Grid for modern layouts.' },
               ],
             },
           },
@@ -412,18 +376,8 @@ async function main() {
             orderIndex: 2,
             lessons: {
               create: [
-                {
-                  title: 'JavaScript Fundamentals',
-                  type: 'video',
-                  orderIndex: 1,
-                  contentText: 'Variables, functions, and control structures.',
-                },
-                {
-                  title: 'DOM Manipulation',
-                  type: 'video',
-                  orderIndex: 2,
-                  contentText: 'Interact with HTML elements using JavaScript.',
-                },
+                { title: 'JavaScript Fundamentals', type: 'video', orderIndex: 1, contentText: 'Variables, functions, and control structures.' },
+                { title: 'DOM Manipulation', type: 'video', orderIndex: 2, contentText: 'Interact with HTML elements using JavaScript.' },
               ],
             },
           },
@@ -436,7 +390,7 @@ async function main() {
   const freeCourse2 = await prisma.course.create({
     data: {
       title: 'English Grammar Basics',
-      description: 'Master the fundamentals of English grammar. Perfect for beginners who want to build a strong foundation.',
+      description: 'Master the fundamentals of English grammar.',
       price: 0,
       instructorId: lecturer2.userId,
       category: 'Grammar',
@@ -450,18 +404,8 @@ async function main() {
             orderIndex: 0,
             lessons: {
               create: [
-                {
-                  title: 'Nouns and Pronouns',
-                  type: 'video',
-                  orderIndex: 1,
-                  contentText: 'Understanding nouns and how to use pronouns correctly.',
-                },
-                {
-                  title: 'Verbs and Tenses',
-                  type: 'video',
-                  orderIndex: 2,
-                  contentText: 'Master verb forms and basic tenses.',
-                },
+                { title: 'Nouns and Pronouns', type: 'video', orderIndex: 1, contentText: 'Understanding nouns and how to use pronouns correctly.' },
+                { title: 'Verbs and Tenses', type: 'video', orderIndex: 2, contentText: 'Master verb forms and basic tenses.' },
               ],
             },
           },
@@ -472,13 +416,12 @@ async function main() {
   console.log('  ✅ FREE Course 2:', freeCourse2.title);
   console.log('');
 
-  // Step 4: Create PAID courses
   console.log('💰 Creating PAID courses...');
-  
+
   const paidCourse1 = await prisma.course.create({
     data: {
       title: 'Advanced English Course - IELTS Preparation',
-      description: 'Comprehensive IELTS preparation course with practice tests, expert guidance, and personalized feedback. Perfect for students aiming for band 7.0+ in IELTS exam.',
+      description: 'Comprehensive IELTS preparation course with practice tests.',
       price: 500000,
       instructorId: lecturer1.userId,
       category: 'IELTS',
@@ -492,18 +435,8 @@ async function main() {
             orderIndex: 0,
             lessons: {
               create: [
-                {
-                  title: 'IELTS Listening Fundamentals',
-                  type: 'video',
-                  orderIndex: 1,
-                  contentText: 'Learn the structure and strategies for IELTS Listening test.',
-                },
-                {
-                  title: 'Practice Test 1',
-                  type: 'quiz',
-                  orderIndex: 2,
-                  contentText: 'Complete a full IELTS Listening practice test.',
-                },
+                { title: 'IELTS Listening Fundamentals', type: 'video', orderIndex: 1, contentText: 'Learn the structure and strategies for IELTS Listening test.' },
+                { title: 'Practice Test 1', type: 'quiz', orderIndex: 2, contentText: 'Complete a full IELTS Listening practice test.' },
               ],
             },
           },
@@ -513,18 +446,8 @@ async function main() {
             orderIndex: 1,
             lessons: {
               create: [
-                {
-                  title: 'IELTS Reading Strategies',
-                  type: 'video',
-                  orderIndex: 1,
-                  contentText: 'Learn how to read efficiently and answer questions accurately.',
-                },
-                {
-                  title: 'Practice Test 2',
-                  type: 'quiz',
-                  orderIndex: 2,
-                  contentText: 'Complete a full IELTS Reading practice test.',
-                },
+                { title: 'IELTS Reading Strategies', type: 'video', orderIndex: 1, contentText: 'Learn how to read efficiently and answer questions accurately.' },
+                { title: 'Practice Test 2', type: 'quiz', orderIndex: 2, contentText: 'Complete a full IELTS Reading practice test.' },
               ],
             },
           },
@@ -534,18 +457,8 @@ async function main() {
             orderIndex: 2,
             lessons: {
               create: [
-                {
-                  title: 'IELTS Writing Task 1 & 2',
-                  type: 'video',
-                  orderIndex: 1,
-                  contentText: 'Master both writing tasks with detailed examples.',
-                },
-                {
-                  title: 'Writing Practice',
-                  type: 'assignment',
-                  orderIndex: 2,
-                  contentText: 'Submit your writing for expert feedback.',
-                },
+                { title: 'IELTS Writing Task 1 & 2', type: 'video', orderIndex: 1, contentText: 'Master both writing tasks with detailed examples.' },
+                { title: 'Writing Practice', type: 'assignment', orderIndex: 2, contentText: 'Submit your writing for expert feedback.' },
               ],
             },
           },
@@ -555,12 +468,7 @@ async function main() {
             orderIndex: 3,
             lessons: {
               create: [
-                {
-                  title: 'IELTS Speaking Practice',
-                  type: 'assignment',
-                  orderIndex: 1,
-                  contentText: 'Practice speaking with AI tutor and get feedback.',
-                },
+                { title: 'IELTS Speaking Practice', type: 'assignment', orderIndex: 1, contentText: 'Practice speaking with AI tutor and get feedback.' },
               ],
             },
           },
@@ -573,7 +481,7 @@ async function main() {
   const paidCourse2 = await prisma.course.create({
     data: {
       title: 'TOEIC Preparation Course',
-      description: 'Complete TOEIC preparation course covering all sections. Achieve your target score with our comprehensive study materials.',
+      description: 'Complete TOEIC preparation course covering all sections.',
       price: 300000,
       instructorId: lecturer2.userId,
       category: 'TOEIC',
@@ -587,18 +495,8 @@ async function main() {
             orderIndex: 0,
             lessons: {
               create: [
-                {
-                  title: 'Part 1: Photos',
-                  type: 'video',
-                  orderIndex: 1,
-                  contentText: 'Learn strategies for photo description questions.',
-                },
-                {
-                  title: 'Part 2: Question-Response',
-                  type: 'video',
-                  orderIndex: 2,
-                  contentText: 'Master question-response patterns.',
-                },
+                { title: 'Part 1: Photos', type: 'video', orderIndex: 1, contentText: 'Learn strategies for photo description questions.' },
+                { title: 'Part 2: Question-Response', type: 'video', orderIndex: 2, contentText: 'Master question-response patterns.' },
               ],
             },
           },
@@ -608,18 +506,8 @@ async function main() {
             orderIndex: 1,
             lessons: {
               create: [
-                {
-                  title: 'Part 5: Incomplete Sentences',
-                  type: 'video',
-                  orderIndex: 1,
-                  contentText: 'Grammar and vocabulary for sentence completion.',
-                },
-                {
-                  title: 'Part 6: Text Completion',
-                  type: 'video',
-                  orderIndex: 2,
-                  contentText: 'Reading comprehension and context clues.',
-                },
+                { title: 'Part 5: Incomplete Sentences', type: 'video', orderIndex: 1, contentText: 'Grammar and vocabulary for sentence completion.' },
+                { title: 'Part 6: Text Completion', type: 'video', orderIndex: 2, contentText: 'Reading comprehension and context clues.' },
               ],
             },
           },
@@ -632,7 +520,7 @@ async function main() {
   const paidCourse3 = await prisma.course.create({
     data: {
       title: 'Business English Communication',
-      description: 'Professional English communication skills for the workplace. Learn to write emails, conduct meetings, and present effectively.',
+      description: 'Professional English communication skills for the workplace.',
       price: 400000,
       instructorId: lecturer1.userId,
       category: 'Business',
@@ -646,18 +534,8 @@ async function main() {
             orderIndex: 0,
             lessons: {
               create: [
-                {
-                  title: 'Email Etiquette',
-                  type: 'video',
-                  orderIndex: 1,
-                  contentText: 'Learn how to write professional emails.',
-                },
-                {
-                  title: 'Business Reports',
-                  type: 'video',
-                  orderIndex: 2,
-                  contentText: 'Structure and write effective business reports.',
-                },
+                { title: 'Email Etiquette', type: 'video', orderIndex: 1, contentText: 'Learn how to write professional emails.' },
+                { title: 'Business Reports', type: 'video', orderIndex: 2, contentText: 'Structure and write effective business reports.' },
               ],
             },
           },
@@ -668,17 +546,14 @@ async function main() {
   console.log('  ✅ PAID Course 3:', paidCourse3.title, `(${paidCourse3.price.toLocaleString('vi-VN')} VND)`);
   console.log('');
 
-  // Step 5: Create quizzes for lessons
   console.log('📝 Creating quizzes...');
-  
-  // Get all lessons from free course 1
+
   const freeCourse1Modules = await prisma.module.findMany({
     where: { courseId: freeCourse1.courseId },
     include: { lessons: true },
   });
-  const freeCourse1Lessons = freeCourse1Modules.flatMap(m => m.lessons);
+  const freeCourse1Lessons = freeCourse1Modules.flatMap((m) => m.lessons);
 
-  // Create quiz for first lesson of free course 1
   if (freeCourse1Lessons.length > 0) {
     const quiz1 = await createQuizWithQuestions(
       freeCourse1Lessons[0].lessonId,
@@ -690,17 +565,15 @@ async function main() {
     console.log('  ✅ Quiz:', quiz1.title, `(${5} questions)`);
   }
 
-  // Get lessons from paid course 1 (IELTS)
   const paidCourse1Modules = await prisma.module.findMany({
     where: { courseId: paidCourse1.courseId },
     include: { lessons: true },
   });
-  const paidCourse1Lessons = paidCourse1Modules.flatMap(m => m.lessons);
+  const paidCourse1Lessons = paidCourse1Modules.flatMap((m) => m.lessons);
 
-  // Create quizzes for IELTS course
   if (paidCourse1Lessons.length >= 2) {
     const ieltsQuiz1 = await createQuizWithQuestions(
-      paidCourse1Lessons[1].lessonId, // Practice Test 1
+      paidCourse1Lessons[1].lessonId,
       'IELTS Listening Practice Quiz',
       30,
       70,
@@ -710,7 +583,7 @@ async function main() {
 
     if (paidCourse1Lessons.length >= 4) {
       const ieltsQuiz2 = await createQuizWithQuestions(
-        paidCourse1Lessons[3].lessonId, // Practice Test 2
+        paidCourse1Lessons[3].lessonId,
         'IELTS Reading Comprehension Quiz',
         60,
         70,
@@ -720,10 +593,8 @@ async function main() {
     }
   }
 
-  // Step 6: Create some enrollments
   console.log('\n📖 Creating enrollments...');
-  
-  // Student 1 enrolls in free course 1
+
   await prisma.enrollment.create({
     data: {
       userId: student1.userId,
@@ -733,7 +604,6 @@ async function main() {
   });
   console.log('  ✅ Student 1 enrolled in:', freeCourse1.title);
 
-  // Student 2 enrolls in free course 2
   await prisma.enrollment.create({
     data: {
       userId: student2.userId,
@@ -746,29 +616,9 @@ async function main() {
   console.log('\n✨ Seeding completed!\n');
   console.log('📝 Test Accounts:');
   console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-  console.log('Admin:');
-  console.log('  Email: admin@example.com');
-  console.log('  Password: password123');
-  console.log('');
-  console.log('Instructors:');
-  console.log('  Email: lecturer@example.com / Password: password123');
-  console.log('  Email: teacher2@example.com / Password: password123');
-  console.log('');
-  console.log('Students:');
-  console.log('  Email: student@example.com / Password: password123');
-  console.log('  Email: student2@example.com / Password: password123');
-  console.log('  Email: student3@example.com / Password: password123');
-  console.log('');
-  console.log('📚 Sample Courses:');
-  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-  console.log('FREE Courses:');
-  console.log(`  1. ${freeCourse1.title}`);
-  console.log(`  2. ${freeCourse2.title}`);
-  console.log('');
-  console.log('PAID Courses:');
-  console.log(`  1. ${paidCourse1.title} - ${paidCourse1.price.toLocaleString('vi-VN')} VND`);
-  console.log(`  2. ${paidCourse2.title} - ${paidCourse2.price.toLocaleString('vi-VN')} VND`);
-  console.log(`  3. ${paidCourse3.title} - ${paidCourse3.price.toLocaleString('vi-VN')} VND`);
+  console.log('Admin: admin@example.com / password123');
+  console.log('Instructors: lecturer@example.com, teacher2@example.com / password123');
+  console.log('Students: student@example.com, student2@example.com, student3@example.com / password123');
   console.log('');
 }
 

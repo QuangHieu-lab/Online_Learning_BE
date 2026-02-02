@@ -1,6 +1,6 @@
-import prisma from '../utils/prisma.js';
+const prisma = require('../utils/prisma');
 
-export const createCourse = async (req, res) => {
+const createCourse = async (req, res) => {
   try {
     const { title, description, price, category, levelTarget } = req.body;
     const instructorId = req.userId;
@@ -33,7 +33,7 @@ export const createCourse = async (req, res) => {
   }
 };
 
-export const getCourses = async (req, res) => {
+const getCourses = async (req, res) => {
   try {
     const userId = req.userId;
     const { enrolled } = req.query;
@@ -70,7 +70,7 @@ export const getCourses = async (req, res) => {
           },
         },
       });
-      courses = enrollments.map((e) => e.course);
+      courses = enrollments.map((e) => ({ ...e.course, isEnrolled: true }));
     } else {
       courses = await prisma.course.findMany({
         include: {
@@ -93,7 +93,7 @@ export const getCourses = async (req, res) => {
         },
       });
 
-      // Add isEnrolled when user is authenticated
+      // Add isEnrolled when user is authenticated (guest: skip)
       if (userId) {
         const enrollments = await prisma.enrollment.findMany({
           where: { userId },
@@ -114,7 +114,7 @@ export const getCourses = async (req, res) => {
   }
 };
 
-export const getCourseById = async (req, res) => {
+const getCourseById = async (req, res) => {
   try {
     const { courseId } = req.params;
     const courseIdInt = parseInt(courseId);
@@ -195,7 +195,7 @@ export const getCourseById = async (req, res) => {
     if (isPaidCourse && !isEnrolled && !isInstructor) {
       const courseWithoutContent = {
         ...course,
-        modules: course.modules.map(module => ({
+        modules: course.modules.map((module) => ({
           ...module,
           lessons: [],
         })),
@@ -214,7 +214,7 @@ export const getCourseById = async (req, res) => {
   }
 };
 
-export const updateCourse = async (req, res) => {
+const updateCourse = async (req, res) => {
   try {
     const { courseId } = req.params;
     const courseIdInt = parseInt(courseId);
@@ -262,7 +262,7 @@ export const updateCourse = async (req, res) => {
   }
 };
 
-export const deleteCourse = async (req, res) => {
+const deleteCourse = async (req, res) => {
   try {
     const { courseId } = req.params;
     const courseIdInt = parseInt(courseId);
@@ -295,7 +295,7 @@ export const deleteCourse = async (req, res) => {
   }
 };
 
-export const enrollInCourse = async (req, res) => {
+const enrollInCourse = async (req, res) => {
   try {
     const { courseId } = req.params;
     const courseIdInt = parseInt(courseId);
@@ -363,4 +363,75 @@ export const enrollInCourse = async (req, res) => {
     }
     res.status(500).json({ error: 'Internal server error' });
   }
+};
+const getCoursesByStudentId = async (req, res) => {
+  try {
+    const { studentId } = req.params; // Lấy ID từ trên URL
+    const studentIdInt = parseInt(studentId);
+
+    if (isNaN(studentIdInt)) {
+      return res.status(400).json({ error: 'Invalid student ID' });
+    }
+
+    // Truy vấn bảng Enrollments (Bảng trung gian)
+    const enrollments = await prisma.enrollment.findMany({
+      where: {
+        userId: studentIdInt, // Tìm tất cả dòng có userId này
+        status: 'active',     // (Tùy chọn) Chỉ lấy khóa đang active
+      },
+      orderBy: {
+        enrolledAt: 'desc',   // Khóa nào mua gần nhất hiện lên đầu
+      },
+      include: {
+        // KẾT NỐI SANG BẢNG COURSE ĐỂ LẤY THÔNG TIN
+        course: {
+          select: {
+            courseId: true,
+            title: true,
+            thumbnailUrl: true,
+            description: true,
+            levelTarget: true,
+            // Lấy thêm thông tin giảng viên để hiển thị đẹp
+            instructor: {
+              select: {
+                fullName: true,
+                avatarUrl: true
+              }
+            },
+            // Đếm số lượng bài học (để FE hiển thị ví dụ: "12 Lessons")
+            modules: {
+              select: {
+                _count: {
+                  select: { lessons: true }
+                }
+              }
+            }
+          }
+        }
+      }
+    });
+
+    // Prisma trả về mảng enrollment chứa object course lồng bên trong.
+    // Chúng ta cần làm phẳng (flatten) nó ra để FE dễ dùng.
+    const purchasedCourses = enrollments.map((item) => ({
+      ...item.course,         // Lấy thông tin khóa học ra ngoài
+      enrolledAt: item.enrolledAt, // Kèm ngày mua
+      expiryDate: item.expiryDate  // Kèm ngày hết hạn (nếu có)
+    }));
+
+    res.json(purchasedCourses);
+
+  } catch (error) {
+    console.error('Get student courses error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+};
+module.exports = {
+  createCourse,
+  getCourses,
+  getCourseById,
+  updateCourse,
+  deleteCourse,
+  enrollInCourse,
+  getCoursesByStudentId
 };

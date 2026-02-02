@@ -1,34 +1,32 @@
-import express from 'express';
-import cors from 'cors';
-import cookieParser from 'cookie-parser';
-import dotenv from 'dotenv';
-import { createServer } from 'http';
-import { Server } from 'socket.io';
-import path from 'path';
-import { fileURLToPath } from 'url';
+const express = require('express');
+const cors = require('cors');
+const cookieParser = require('cookie-parser');
+require('dotenv').config();
 
-import authRoutes from './routes/auth.routes.js';
-import courseRoutes from './routes/course.routes.js';
-import lessonRoutes from './routes/lesson.routes.js';
-import videoRoutes from './routes/video.routes.js';
-import quizRoutes from './routes/quiz.routes.js';
-import aiRoutes from './routes/ai.routes.js';
-import progressRoutes from './routes/progress.routes.js';
-import userRoutes from './routes/user.routes.js';
-import paymentRoutes from './routes/payment.routes.js';
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('[Server] Unhandled Rejection at:', promise, 'reason:', reason);
+});
+const { createServer } = require('http');
+const { Server } = require('socket.io');
+const path = require('path');
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
-dotenv.config();
+const authRoutes = require('./routes/auth.routes');
+const courseRoutes = require('./routes/course.routes');
+const lessonRoutes = require('./routes/lesson.routes');
+const videoRoutes = require('./routes/video.routes');
+const quizRoutes = require('./routes/quiz.routes');
+const aiRoutes = require('./routes/ai.routes');
+const progressRoutes = require('./routes/progress.routes');
+const userRoutes = require('./routes/user.routes');
+const paymentRoutes = require('./routes/payment.routes');
 
 const app = express();
 const httpServer = createServer(app);
 const io = new Server(httpServer, {
   cors: {
-    origin: process.env.FRONTEND_URL || 'http://localhost:3000',
-    methods: ['GET', 'POST']
-  }
+    origin: process.env.FRONTEND_URL || 'http://127.0.0.1:5173',
+    methods: ['GET', 'POST'],
+  },
 });
 
 const allowedOrigins = [
@@ -37,26 +35,31 @@ const allowedOrigins = [
   'http://127.0.0.1:5173',
 ];
 
-app.use(cors({
-  origin: (origin, callback) => {
-    if (!origin) return callback(null, true);
+app.use(
+  cors({
+    origin: (origin, callback) => {
+      if (!origin) return callback(null, true);
 
-    if (allowedOrigins.includes(origin)) {
-      callback(null, true);
-    } else {
-      console.warn(`CORS blocked origin: ${origin}`);
-      callback(new Error('Not allowed by CORS'));
-    }
-  },
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
-  exposedHeaders: ['Set-Cookie'],
-}));
+      if (allowedOrigins.includes(origin)) {
+        callback(null, true);
+      } else {
+        console.warn(`CORS blocked origin: ${origin}`);
+        callback(new Error('Not allowed by CORS'));
+      }
+    },
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
+    exposedHeaders: ['Set-Cookie'],
+  })
+);
 
 app.use((req, res, next) => {
   const isProduction = process.env.NODE_ENV === 'production';
-  res.setHeader('Cross-Origin-Opener-Policy', isProduction ? 'same-origin-allow-popups' : 'unsafe-none');
+  res.setHeader(
+    'Cross-Origin-Opener-Policy',
+    isProduction ? 'same-origin-allow-popups' : 'unsafe-none'
+  );
   next();
 });
 
@@ -64,14 +67,20 @@ app.use(cookieParser());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-app.use('/uploads', express.static(path.join(__dirname, '../uploads'), {
-  setHeaders: (res, filePath) => {
-    res.setHeader('Access-Control-Allow-Origin', process.env.FRONTEND_URL || 'http://127.0.0.1:5173');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Range');
-    res.setHeader('Accept-Ranges', 'bytes');
-  }
-}));
+app.use(
+  '/uploads',
+  express.static(path.join(__dirname, '../uploads'), {
+    setHeaders: (res, filePathArg) => {
+      res.setHeader(
+        'Access-Control-Allow-Origin',
+        process.env.FRONTEND_URL || 'http://127.0.0.1:5173'
+      );
+      res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
+      res.setHeader('Access-Control-Allow-Headers', 'Range');
+      res.setHeader('Accept-Ranges', 'bytes');
+    },
+  })
+);
 
 app.use('/api/auth', authRoutes);
 app.use('/api/courses', courseRoutes);
@@ -98,21 +107,21 @@ io.on('connection', (socket) => {
   socket.on('offer', (data) => {
     socket.to(data.roomId).emit('offer', {
       offer: data.offer,
-      from: socket.id
+      from: socket.id,
     });
   });
 
   socket.on('answer', (data) => {
     socket.to(data.roomId).emit('answer', {
       answer: data.answer,
-      from: socket.id
+      from: socket.id,
     });
   });
 
   socket.on('ice-candidate', (data) => {
     socket.to(data.roomId).emit('ice-candidate', {
       candidate: data.candidate,
-      from: socket.id
+      from: socket.id,
     });
   });
 
@@ -123,15 +132,8 @@ io.on('connection', (socket) => {
 
 const PORT = process.env.PORT || 3000;
 
-httpServer.on('error', (err) => {
-  if (err.code === 'EADDRINUSE') {
-    console.error(`\n❌ Port ${PORT} đang được sử dụng. Chạy: npm run kill-port\n`);
-  }
-  process.exit(1);
-});
-
-httpServer.listen({ port: PORT, host: '0.0.0.0', reuseAddr: true }, () => {
+httpServer.listen(PORT,() => {
   console.log(`Server is running on port ${PORT}`);
 });
 
-export { io };
+module.exports = { io };

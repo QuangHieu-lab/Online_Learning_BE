@@ -1,20 +1,22 @@
-import { getStorageBucket } from './firebase.service.js';
-import { Readable } from 'stream';
+const { getStorageBucket } = require('./firebase.service');
+const { Readable } = require('stream');
 
-/**
- * Upload file to Firebase Storage
- */
-export const uploadFileToFirebase = async (file, folder = 'videos', customFileName) => {
+const getFileExtension = (filename) => {
+  const ext = filename.split('.').pop();
+  return ext ? `.${ext}` : '';
+};
+
+const uploadFileToFirebase = async (file, folder = 'videos', customFileName) => {
   try {
     const bucket = getStorageBucket();
-    const fileName = customFileName || `${Date.now()}-${Math.round(Math.random() * 1e9)}${getFileExtension(file.originalname)}`;
+    const fileName =
+      customFileName ||
+      `${Date.now()}-${Math.round(Math.random() * 1e9)}${getFileExtension(file.originalname)}`;
     const filePath = `${folder}/${fileName}`;
     const fileRef = bucket.file(filePath);
 
-    // Convert buffer to stream
     const stream = Readable.from(file.buffer);
 
-    // Upload file
     await new Promise((resolve, reject) => {
       const writeStream = fileRef.createWriteStream({
         metadata: {
@@ -23,7 +25,7 @@ export const uploadFileToFirebase = async (file, folder = 'videos', customFileNa
             originalName: file.originalname,
           },
         },
-        public: true, // Make file publicly accessible
+        public: true,
       });
 
       stream.pipe(writeStream);
@@ -38,7 +40,6 @@ export const uploadFileToFirebase = async (file, folder = 'videos', customFileNa
       });
     });
 
-    // Get public URL
     const url = `https://firebasestorage.googleapis.com/v0/b/${bucket.name}/o/${encodeURIComponent(filePath)}?alt=media`;
 
     return {
@@ -52,10 +53,7 @@ export const uploadFileToFirebase = async (file, folder = 'videos', customFileNa
   }
 };
 
-/**
- * Delete file from Firebase Storage
- */
-export const deleteFileFromFirebase = async (filePath) => {
+const deleteFileFromFirebase = async (filePath) => {
   try {
     const bucket = getStorageBucket();
     const fileRef = bucket.file(filePath);
@@ -63,22 +61,15 @@ export const deleteFileFromFirebase = async (filePath) => {
     console.log(`File deleted: ${filePath}`);
   } catch (error) {
     console.error('Error deleting file from Firebase Storage:', error);
-    // Don't throw - file might not exist
   }
 };
 
-/**
- * Get public URL for a file
- */
-export const getFileUrl = (filePath) => {
+const getFileUrl = (filePath) => {
   const bucket = getStorageBucket();
   return `https://firebasestorage.googleapis.com/v0/b/${bucket.name}/o/${encodeURIComponent(filePath)}?alt=media`;
 };
 
-/**
- * Get signed URL (temporary access)
- */
-export const getSignedUrl = async (filePath, expiresIn = 3600) => {
+const getSignedUrl = async (filePath, expiresIn = 3600) => {
   try {
     const bucket = getStorageBucket();
     const fileRef = bucket.file(filePath);
@@ -93,10 +84,9 @@ export const getSignedUrl = async (filePath, expiresIn = 3600) => {
   }
 };
 
-/**
- * Helper to get file extension
- */
-const getFileExtension = (filename) => {
-  const ext = filename.split('.').pop();
-  return ext ? `.${ext}` : '';
+module.exports = {
+  uploadFileToFirebase,
+  deleteFileFromFirebase,
+  getFileUrl,
+  getSignedUrl,
 };

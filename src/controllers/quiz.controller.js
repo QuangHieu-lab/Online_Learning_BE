@@ -1,6 +1,6 @@
-import prisma from '../utils/prisma.js';
+const prisma = require('../utils/prisma');
 
-export const createQuiz = async (req, res) => {
+const createQuiz = async (req, res) => {
   try {
     const { lessonId } = req.params;
     const { title, timeLimitMinutes, passingScore } = req.body;
@@ -53,7 +53,7 @@ export const createQuiz = async (req, res) => {
   }
 };
 
-export const getQuizzes = async (req, res) => {
+const getQuizzes = async (req, res) => {
   try {
     const { lessonId } = req.params;
     const lessonIdInt = parseInt(lessonId);
@@ -81,7 +81,7 @@ export const getQuizzes = async (req, res) => {
   }
 };
 
-export const getQuizById = async (req, res) => {
+const getQuizById = async (req, res) => {
   try {
     const { quizId } = req.params;
     const quizIdInt = parseInt(quizId);
@@ -191,7 +191,7 @@ export const getQuizById = async (req, res) => {
   }
 };
 
-export const updateQuiz = async (req, res) => {
+const updateQuiz = async (req, res) => {
   try {
     const { quizId } = req.params;
     const quizIdInt = parseInt(quizId);
@@ -241,7 +241,7 @@ export const updateQuiz = async (req, res) => {
   }
 };
 
-export const deleteQuiz = async (req, res) => {
+const deleteQuiz = async (req, res) => {
   try {
     const { quizId } = req.params;
     const quizIdInt = parseInt(quizId);
@@ -285,7 +285,7 @@ export const deleteQuiz = async (req, res) => {
   }
 };
 
-export const submitQuiz = async (req, res) => {
+const submitQuiz = async (req, res) => {
   try {
     const { quizId } = req.params;
     const quizIdInt = parseInt(quizId);
@@ -351,7 +351,9 @@ export const submitQuiz = async (req, res) => {
         correctAnswerContent = correctAnswer?.contentText || null;
 
         if (userAnswer) {
-          const selectedAnswer = question.questionAnswers.find((a) => a.answerId === userAnswer.answerId);
+          const selectedAnswer = question.questionAnswers.find(
+            (a) => a.answerId === userAnswer.answerId
+          );
           userAnswerContent = selectedAnswer?.contentText || null;
           if (userAnswer.answerId === correctAnswer?.answerId) {
             isCorrect = true;
@@ -370,7 +372,9 @@ export const submitQuiz = async (req, res) => {
         correctAnswerContent = correctAnswer?.contentText || null;
 
         if (userAnswer) {
-          const selectedAnswer = question.questionAnswers.find((a) => a.answerId === userAnswer.answerId);
+          const selectedAnswer = question.questionAnswers.find(
+            (a) => a.answerId === userAnswer.answerId
+          );
           userAnswerContent = selectedAnswer?.contentText || null;
           if (userAnswer.answerId === correctAnswer?.answerId) {
             isCorrect = true;
@@ -431,4 +435,13 @@ export const submitQuiz = async (req, res) => {
     console.error('Submit quiz error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
+};
+
+module.exports = {
+  createQuiz,
+  getQuizzes,
+  getQuizById,
+  updateQuiz,
+  deleteQuiz,
+  submitQuiz,
 };

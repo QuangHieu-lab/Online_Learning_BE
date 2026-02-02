@@ -1,11 +1,11 @@
-import { Router } from 'express';
-import {
+const { Router } = require('express');
+const {
   generateQuiz,
   chatWithTutor,
   getHint,
   getKnowledgeGaps,
-} from '../controllers/ai.controller.js';
-import { authenticate, requireLecturer } from '../middleware/auth.middleware.js';
+} = require('../controllers/ai.controller');
+const { authenticate, requireLecturer } = require('../middleware/auth.middleware');
 
 const router = Router();
 
@@ -15,4 +15,4 @@ router.post('/chat', authenticate, chatWithTutor);
 router.get('/submissions/:submissionId/questions/:questionId/hint', authenticate, getHint);
 router.get('/users/:userId/knowledge-gaps', authenticate, getKnowledgeGaps);
 
-export default router;
+module.exports = router;

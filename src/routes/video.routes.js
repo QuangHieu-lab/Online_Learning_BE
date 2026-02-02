@@ -1,13 +1,13 @@
-import { Router } from 'express';
-import {
+const { Router } = require('express');
+const {
   uploadVideo,
   getVideo,
   streamVideo,
   downloadVideo,
   deleteVideo,
-} from '../controllers/video.controller.js';
-import { authenticate } from '../middleware/auth.middleware.js';
-import { uploadVideo as uploadMiddleware } from '../middleware/upload.middleware.js';
+} = require('../controllers/video.controller');
+const { authenticate } = require('../middleware/auth.middleware');
+const { uploadVideo: uploadMiddleware } = require('../middleware/upload.middleware');
 
 const router = Router();
 
@@ -17,4 +17,4 @@ router.get('/:videoId/stream', authenticate, streamVideo);
 router.get('/:videoId/download', authenticate, downloadVideo);
 router.delete('/:videoId', authenticate, deleteVideo);
 
-export default router;
+module.exports = router;

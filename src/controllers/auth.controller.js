@@ -1,19 +1,18 @@
-import crypto from 'crypto';
-import bcrypt from 'bcrypt';
-import jwt from 'jsonwebtoken';
-import prisma from '../utils/prisma.js';
-import { verifyFirebaseToken } from '../services/firebase.service.js';
-import { sendLoginNotification, sendWelcomeWithPassword } from '../services/email.service.js';
-import { getCookieOptions } from '../utils/cookie.utils.js';
+const crypto = require('crypto');
+const bcrypt = require('bcrypt');
+const jwt = require('jsonwebtoken');
+const prisma = require('../utils/prisma');
+const { verifyFirebaseToken } = require('../services/firebase.service');
+const { sendLoginNotification, sendWelcomeWithPassword } = require('../services/email.service');
+const { getCookieOptions } = require('../utils/cookie.utils');
 
-/** Generate secure random password (12 chars: letters + numbers) */
 function generateRandomPassword() {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789';
   const bytes = crypto.randomBytes(12);
   return Array.from(bytes, (b) => chars[b % chars.length]).join('');
 }
 
-export const register = async (req, res) => {
+const register = async (req, res) => {
   try {
     const { email, password, name, role } = req.body;
 
@@ -21,7 +20,6 @@ export const register = async (req, res) => {
       return res.status(400).json({ error: 'Email, password, and name are required' });
     }
 
-    // Check if user exists
     const existingUser = await prisma.user.findUnique({
       where: { email },
     });
@@ -30,16 +28,12 @@ export const register = async (req, res) => {
       return res.status(400).json({ error: 'User already exists' });
     }
 
-    // Hash password
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    // Map old role to new role name
     let roleName = 'student';
     if (role === 'ADMIN') roleName = 'admin';
     else if (role === 'LECTURER') roleName = 'instructor';
-    else roleName = 'student';
 
-    // Get role ID
     const roleRecord = await prisma.role.findUnique({
       where: { roleName },
     });
@@ -48,7 +42,6 @@ export const register = async (req, res) => {
       return res.status(500).json({ error: 'Role not found' });
     }
 
-    // Create user with user_roles
     const user = await prisma.user.create({
       data: {
         email,
@@ -69,17 +62,14 @@ export const register = async (req, res) => {
       },
     });
 
-    // Get roles array for JWT
-    const roles = user.userRoles.map(ur => ur.role.roleName);
+    const roles = user.userRoles.map((ur) => ur.role.roleName);
 
-    // Generate token with roles array
     const token = jwt.sign(
       { userId: user.userId, roles },
       process.env.JWT_SECRET || 'secret',
       { expiresIn: '7d' }
     );
 
-    // Set cookie instead of returning token in response
     const cookieOptions = getCookieOptions();
     if (process.env.NODE_ENV !== 'production') {
       delete cookieOptions.domain;
@@ -101,7 +91,7 @@ export const register = async (req, res) => {
   }
 };
 
-export const login = async (req, res) => {
+const login = async (req, res) => {
   try {
     const { email, password } = req.body;
 
@@ -109,7 +99,6 @@ export const login = async (req, res) => {
       return res.status(400).json({ error: 'Email and password are required' });
     }
 
-    // Find user with roles
     const user = await prisma.user.findUnique({
       where: { email },
       include: {
@@ -125,24 +114,20 @@ export const login = async (req, res) => {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
-    // Verify password
     const isValidPassword = await bcrypt.compare(password, user.passwordHash);
 
     if (!isValidPassword) {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
-    // Get roles array
-    const roles = user.userRoles.map(ur => ur.role.roleName);
+    const roles = user.userRoles.map((ur) => ur.role.roleName);
 
-    // Generate token with roles array
     const token = jwt.sign(
       { userId: user.userId, roles },
       process.env.JWT_SECRET || 'secret',
       { expiresIn: '7d' }
     );
 
-    // Set cookie instead of returning token in response
     const cookieOptions = getCookieOptions();
     if (process.env.NODE_ENV !== 'production') {
       delete cookieOptions.domain;
@@ -164,7 +149,7 @@ export const login = async (req, res) => {
   }
 };
 
-export const googleSignIn = async (req, res) => {
+const googleSignIn = async (req, res) => {
   try {
     const { idToken } = req.body;
 
@@ -175,7 +160,6 @@ export const googleSignIn = async (req, res) => {
 
     console.log('Google sign-in: Verifying token...');
 
-    // Verify Firebase ID token
     const decodedToken = await verifyFirebaseToken(idToken);
     const { uid, email, name, picture } = decodedToken;
 
@@ -186,23 +170,21 @@ export const googleSignIn = async (req, res) => {
 
     console.log(`Google sign-in: Token verified for email: ${email}`);
 
-    // Check if user exists in database
     let user = await prisma.user.findUnique({
       where: { email },
     });
 
-    // Get student role
     const studentRole = await prisma.role.findUnique({
       where: { roleName: 'student' },
     });
 
     if (!studentRole) {
-      return res.status(500).json({ error: 'Student role not found' });
+      console.error('Google sign-in: Student role not found. Run: npx prisma db seed');
+      return res.status(500).json({ error: 'Server configuration error. Please contact admin.' });
     }
 
     let isNewUser = false;
 
-    // If user doesn't exist, create new user with generated password
     if (!user) {
       isNewUser = true;
       const plainPassword = generateRandomPassword();
@@ -230,19 +212,16 @@ export const googleSignIn = async (req, res) => {
         },
       });
 
-      // Send welcome email with generated password (async, don't block login)
       sendWelcomeWithPassword(user.email, user.fullName, plainPassword).catch((err) => {
         console.error('Failed to send welcome email with password:', err);
       });
     } else {
-      // Update Firebase UID if not set
       if (!user.firebaseUid) {
         await prisma.user.update({
           where: { userId: user.userId },
           data: { firebaseUid: uid },
         });
       }
-      // Get user with roles
       user = await prisma.user.findUnique({
         where: { userId: user.userId },
         include: {
@@ -255,24 +234,20 @@ export const googleSignIn = async (req, res) => {
       });
     }
 
-    // Get roles array
-    const roles = user.userRoles.map(ur => ur.role.roleName);
+    const roles = user.userRoles.map((ur) => ur.role.roleName);
 
-    // Generate JWT token with roles array
     const token = jwt.sign(
       { userId: user.userId, roles },
       process.env.JWT_SECRET || 'secret',
       { expiresIn: '7d' }
     );
 
-    // Set cookie instead of returning token in response
     const cookieOptions = getCookieOptions();
     if (process.env.NODE_ENV !== 'production') {
       delete cookieOptions.domain;
     }
     res.cookie('authToken', token, cookieOptions);
 
-    // Send login notification for existing users only (new users got welcome email)
     if (!isNewUser) {
       sendLoginNotification(user.email, user.fullName, 'google').catch((error) => {
         console.error('Failed to send login notification email:', error);
@@ -303,7 +278,7 @@ export const googleSignIn = async (req, res) => {
   }
 };
 
-export const getMe = async (req, res) => {
+const getMe = async (req, res) => {
   try {
     const userId = req.userId;
 
@@ -326,7 +301,7 @@ export const getMe = async (req, res) => {
       return res.status(404).json({ error: 'User not found' });
     }
 
-    const roles = user.userRoles.map(ur => ur.role.roleName);
+    const roles = user.userRoles.map((ur) => ur.role.roleName);
 
     res.json({
       user: {
@@ -347,8 +322,7 @@ export const getMe = async (req, res) => {
   }
 };
 
-/** Update own profile (except email) */
-export const updateProfile = async (req, res) => {
+const updateProfile = async (req, res) => {
   try {
     const userId = req.userId;
     if (!userId) return res.status(401).json({ error: 'Unauthorized' });
@@ -381,7 +355,7 @@ export const updateProfile = async (req, res) => {
       },
     });
 
-    const roles = user.userRoles.map(ur => ur.role.roleName);
+    const roles = user.userRoles.map((ur) => ur.role.roleName);
 
     res.json({
       message: 'Profile updated successfully',
@@ -403,8 +377,7 @@ export const updateProfile = async (req, res) => {
   }
 };
 
-/** Delete own account */
-export const deleteOwnAccount = async (req, res) => {
+const deleteOwnAccount = async (req, res) => {
   try {
     const userId = req.userId;
     if (!userId) return res.status(401).json({ error: 'Unauthorized' });
@@ -418,7 +391,6 @@ export const deleteOwnAccount = async (req, res) => {
 
     if (!user) return res.status(404).json({ error: 'User not found' });
 
-    // Users with password must confirm
     if (user.passwordHash) {
       if (!password) {
         return res.status(400).json({ error: 'Password required to delete account' });
@@ -433,7 +405,6 @@ export const deleteOwnAccount = async (req, res) => {
       where: { userId: userIdInt },
     });
 
-    // Clear auth cookie
     const cookieOptions = getCookieOptions();
     if (process.env.NODE_ENV !== 'production') {
       delete cookieOptions.domain;
@@ -447,7 +418,7 @@ export const deleteOwnAccount = async (req, res) => {
   }
 };
 
-export const logout = async (req, res) => {
+const logout = async (req, res) => {
   try {
     const cookieOptions = getCookieOptions();
     if (process.env.NODE_ENV !== 'production') {
@@ -465,10 +436,7 @@ export const logout = async (req, res) => {
   }
 };
 
-/**
- * Refresh auth cookie after payment callback
- */
-export const refreshFromPayment = async (req, res) => {
+const refreshFromPayment = async (req, res) => {
   try {
     const { txnRef } = req.query;
 
@@ -504,7 +472,7 @@ export const refreshFromPayment = async (req, res) => {
     }
 
     const user = transaction.order.user;
-    const roles = user.userRoles.map(ur => ur.role.roleName);
+    const roles = user.userRoles.map((ur) => ur.role.roleName);
 
     const token = jwt.sign(
       { userId: user.userId, roles },
@@ -521,6 +489,7 @@ export const refreshFromPayment = async (req, res) => {
     console.log('[refreshFromPayment] Request host:', req.headers.host);
 
     res.cookie('authToken', token, cookieOptions);
+
     res.setHeader('Access-Control-Allow-Credentials', 'true');
     if (req.headers.origin) {
       res.setHeader('Access-Control-Allow-Origin', req.headers.origin);
@@ -539,4 +508,15 @@ export const refreshFromPayment = async (req, res) => {
     console.error('Refresh from payment error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
+};
+
+module.exports = {
+  register,
+  login,
+  googleSignIn,
+  getMe,
+  updateProfile,
+  deleteOwnAccount,
+  logout,
+  refreshFromPayment,
 };

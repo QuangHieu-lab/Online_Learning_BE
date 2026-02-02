@@ -1,6 +1,6 @@
-import prisma from '../utils/prisma.js';
+const prisma = require('../utils/prisma');
 
-export const createLesson = async (req, res) => {
+const createLesson = async (req, res) => {
   try {
     const { moduleId } = req.params;
     const { title, type, mediaUrl, orderIndex } = req.body;
@@ -50,7 +50,7 @@ export const createLesson = async (req, res) => {
   }
 };
 
-export const getLessons = async (req, res) => {
+const getLessons = async (req, res) => {
   try {
     const { moduleId } = req.params;
     const moduleIdInt = parseInt(moduleId);
@@ -80,7 +80,7 @@ export const getLessons = async (req, res) => {
   }
 };
 
-export const getLessonById = async (req, res) => {
+const getLessonById = async (req, res) => {
   try {
     const { lessonId } = req.params;
     const lessonIdInt = parseInt(lessonId);
@@ -129,7 +129,7 @@ export const getLessonById = async (req, res) => {
   }
 };
 
-export const updateLesson = async (req, res) => {
+const updateLesson = async (req, res) => {
   try {
     const { lessonId } = req.params;
     const lessonIdInt = parseInt(lessonId);
@@ -183,7 +183,7 @@ export const updateLesson = async (req, res) => {
   }
 };
 
-export const deleteLesson = async (req, res) => {
+const deleteLesson = async (req, res) => {
   try {
     const { lessonId } = req.params;
     const lessonIdInt = parseInt(lessonId);
@@ -221,4 +221,12 @@ export const deleteLesson = async (req, res) => {
     console.error('Delete lesson error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
+};
+
+module.exports = {
+  createLesson,
+  getLessons,
+  getLessonById,
+  updateLesson,
+  deleteLesson,
 };

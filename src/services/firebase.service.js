@@ -1,27 +1,20 @@
-import admin from 'firebase-admin';
-import { getStorage } from 'firebase-admin/storage';
-import dotenv from 'dotenv';
+const admin = require('firebase-admin');
+const { getStorage } = require('firebase-admin/storage');
+require('dotenv').config();
 
-// Load environment variables first
-dotenv.config();
-
-// Initialize Firebase Admin SDK
 if (!admin.apps.length) {
   try {
-    // Validate required environment variables
     const projectId = process.env.FIREBASE_PROJECT_ID;
     const privateKey = process.env.FIREBASE_PRIVATE_KEY;
     const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
 
     if (!projectId) {
       console.warn('⚠️  FIREBASE_PROJECT_ID is not set. Firebase features will be disabled.');
-      // Don't throw - allow server to start without Firebase
     } else if (!privateKey) {
       console.warn('⚠️  FIREBASE_PRIVATE_KEY is not set. Firebase features will be disabled.');
     } else if (!clientEmail) {
       console.warn('⚠️  FIREBASE_CLIENT_EMAIL is not set. Firebase features will be disabled.');
     } else {
-      // All required variables are present, initialize Firebase
       admin.initializeApp({
         credential: admin.credential.cert({
           projectId: projectId,
@@ -34,21 +27,17 @@ if (!admin.apps.length) {
     }
   } catch (error) {
     console.error('❌ Error initializing Firebase Admin SDK:', error.message);
-    // Don't throw - allow server to start even if Firebase fails
-    // This way other features can still work
   }
 }
 
-// Get Firebase Storage bucket
-export const getStorageBucket = () => {
+const getStorageBucket = () => {
   if (!admin.apps.length) {
     throw new Error('Firebase Admin SDK is not initialized. Please check your .env file.');
   }
   return getStorage().bucket();
 };
 
-// Verify Firebase ID token
-export const verifyFirebaseToken = async (idToken) => {
+const verifyFirebaseToken = async (idToken) => {
   try {
     if (!admin.apps.length) {
       throw new Error('Firebase Admin SDK is not initialized');
@@ -61,8 +50,7 @@ export const verifyFirebaseToken = async (idToken) => {
   }
 };
 
-// Get user by Firebase UID
-export const getFirebaseUser = async (uid) => {
+const getFirebaseUser = async (uid) => {
   try {
     if (!admin.apps.length) {
       throw new Error('Firebase Admin SDK is not initialized');
@@ -75,8 +63,7 @@ export const getFirebaseUser = async (uid) => {
   }
 };
 
-// Create custom token (if needed)
-export const createCustomToken = async (uid, additionalClaims) => {
+const createCustomToken = async (uid, additionalClaims) => {
   try {
     if (!admin.apps.length) {
       throw new Error('Firebase Admin SDK is not initialized');
@@ -89,8 +76,14 @@ export const createCustomToken = async (uid, additionalClaims) => {
   }
 };
 
-// Send email - now using nodemailer service
-// Import email service for sending emails
-export { sendEmail, sendLoginNotification } from './email.service.js';
+const { sendEmail, sendLoginNotification } = require('./email.service');
 
-export default admin;
+module.exports = {
+  getStorageBucket,
+  verifyFirebaseToken,
+  getFirebaseUser,
+  createCustomToken,
+  sendEmail,
+  sendLoginNotification,
+};
+module.exports.default = admin;

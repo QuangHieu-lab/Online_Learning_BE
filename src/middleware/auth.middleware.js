@@ -1,7 +1,7 @@
-import jwt from 'jsonwebtoken';
+const jwt = require('jsonwebtoken');
 
 /** Optional auth: set req.userId if token valid, otherwise undefined. Never blocks. */
-export const optionalAuthenticate = (req, res, next) => {
+const optionalAuthenticate = (req, res, next) => {
   try {
     const token = req.cookies?.authToken || req.headers.authorization?.split(' ')[1];
     if (token) {
@@ -20,10 +20,8 @@ export const optionalAuthenticate = (req, res, next) => {
   }
 };
 
-export const authenticate = (req, res, next) => {
+const authenticate = (req, res, next) => {
   try {
-    // Try to get token from cookie first (primary method)
-    // Fallback to Authorization header for backward compatibility
     const token = req.cookies?.authToken || req.headers.authorization?.split(' ')[1];
 
     if (!token) {
@@ -40,7 +38,7 @@ export const authenticate = (req, res, next) => {
   }
 };
 
-export const requireLecturer = (req, res, next) => {
+const requireLecturer = (req, res, next) => {
   const roles = req.userRoles || [];
   if (!roles.includes('instructor') && !roles.includes('admin')) {
     return res.status(403).json({ error: 'Lecturer or Admin access required' });
@@ -48,10 +46,17 @@ export const requireLecturer = (req, res, next) => {
   next();
 };
 
-export const requireAdmin = (req, res, next) => {
+const requireAdmin = (req, res, next) => {
   const roles = req.userRoles || [];
   if (!roles.includes('admin')) {
     return res.status(403).json({ error: 'Admin access required' });
   }
   next();
+};
+
+module.exports = {
+  authenticate,
+  optionalAuthenticate,
+  requireLecturer,
+  requireAdmin,
 };

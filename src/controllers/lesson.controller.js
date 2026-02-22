@@ -1,30 +1,18 @@
 const prisma = require('../utils/prisma');
+const { getModuleForInstructor, ensureModuleAccess, ensureLessonAccess, getLessonForInstructor, sendAccessError } = require('../utils/access.helpers');
 
 const createLesson = async (req, res) => {
   try {
     const { moduleId } = req.params;
-    const { title, type, mediaUrl, orderIndex } = req.body;
+    const { title, type, mediaUrl, orderIndex, contentText } = req.body;
     const userId = req.userId;
-    const moduleIdInt = parseInt(moduleId);
 
-    if (isNaN(moduleIdInt)) {
-      return res.status(400).json({ error: 'Invalid module ID' });
+    const access = await getModuleForInstructor(moduleId, userId);
+    if (access.error) {
+      return sendAccessError(res, access.error);
     }
-
-    const module = await prisma.module.findUnique({
-      where: { moduleId: moduleIdInt },
-      include: {
-        course: true,
-      },
-    });
-
-    if (!module) {
-      return res.status(404).json({ error: 'Module not found' });
-    }
-
-    if (module.course.instructorId !== userId) {
-      return res.status(403).json({ error: 'Not authorized' });
-    }
+    const { module } = access;
+    const moduleIdInt = module.moduleId;
 
     const lesson = await prisma.lesson.create({
       data: {
@@ -33,6 +21,7 @@ const createLesson = async (req, res) => {
         type: type || 'video',
         mediaUrl,
         orderIndex: orderIndex || 0,
+        ...(contentText !== undefined && { contentText }),
       },
       include: {
         module: {
@@ -53,11 +42,13 @@ const createLesson = async (req, res) => {
 const getLessons = async (req, res) => {
   try {
     const { moduleId } = req.params;
-    const moduleIdInt = parseInt(moduleId);
+    const userId = req.userId;
 
-    if (isNaN(moduleIdInt)) {
-      return res.status(400).json({ error: 'Invalid module ID' });
+    const access = await ensureModuleAccess(moduleId, userId);
+    if (access.error) {
+      return sendAccessError(res, access.error);
     }
+    const moduleIdInt = access.module.moduleId;
 
     const lessons = await prisma.lesson.findMany({
       where: { moduleId: moduleIdInt },
@@ -83,11 +74,13 @@ const getLessons = async (req, res) => {
 const getLessonById = async (req, res) => {
   try {
     const { lessonId } = req.params;
-    const lessonIdInt = parseInt(lessonId);
+    const userId = req.userId;
 
-    if (isNaN(lessonIdInt)) {
-      return res.status(400).json({ error: 'Invalid lesson ID' });
+    const access = await ensureLessonAccess(lessonId, userId);
+    if (access.error) {
+      return sendAccessError(res, access.error);
     }
+    const lessonIdInt = access.lesson.lessonId;
 
     const lesson = await prisma.lesson.findUnique({
       where: { lessonId: lessonIdInt },
@@ -118,10 +111,6 @@ const getLessonById = async (req, res) => {
       },
     });
 
-    if (!lesson) {
-      return res.status(404).json({ error: 'Lesson not found' });
-    }
-
     res.json(lesson);
   } catch (error) {
     console.error('Get lesson error:', error);
@@ -132,41 +121,26 @@ const getLessonById = async (req, res) => {
 const updateLesson = async (req, res) => {
   try {
     const { lessonId } = req.params;
-    const lessonIdInt = parseInt(lessonId);
-    const { title, type, mediaUrl, orderIndex } = req.body;
+    const { title, type, mediaUrl, orderIndex, contentText } = req.body;
     const userId = req.userId;
 
-    if (isNaN(lessonIdInt)) {
-      return res.status(400).json({ error: 'Invalid lesson ID' });
+    const access = await getLessonForInstructor(lessonId, userId);
+    if (access.error) {
+      return sendAccessError(res, access.error);
     }
+    const { lesson } = access;
+    const lessonIdInt = lesson.lessonId;
 
-    const lesson = await prisma.lesson.findUnique({
-      where: { lessonId: lessonIdInt },
-      include: {
-        module: {
-          include: {
-            course: true,
-          },
-        },
-      },
-    });
-
-    if (!lesson) {
-      return res.status(404).json({ error: 'Lesson not found' });
-    }
-
-    if (lesson.module.course.instructorId !== userId) {
-      return res.status(403).json({ error: 'Not authorized' });
-    }
+    const updateData = {};
+    if (title !== undefined) updateData.title = title;
+    if (type !== undefined) updateData.type = type;
+    if (mediaUrl !== undefined) updateData.mediaUrl = mediaUrl;
+    if (orderIndex !== undefined) updateData.orderIndex = orderIndex;
+    if (contentText !== undefined) updateData.contentText = contentText;
 
     const updatedLesson = await prisma.lesson.update({
       where: { lessonId: lessonIdInt },
-      data: {
-        title,
-        type,
-        mediaUrl,
-        orderIndex,
-      },
+      data: updateData,
       include: {
         module: {
           include: {
@@ -186,34 +160,16 @@ const updateLesson = async (req, res) => {
 const deleteLesson = async (req, res) => {
   try {
     const { lessonId } = req.params;
-    const lessonIdInt = parseInt(lessonId);
     const userId = req.userId;
 
-    if (isNaN(lessonIdInt)) {
-      return res.status(400).json({ error: 'Invalid lesson ID' });
+    const access = await getLessonForInstructor(lessonId, userId);
+    if (access.error) {
+      return sendAccessError(res, access.error);
     }
-
-    const lesson = await prisma.lesson.findUnique({
-      where: { lessonId: lessonIdInt },
-      include: {
-        module: {
-          include: {
-            course: true,
-          },
-        },
-      },
-    });
-
-    if (!lesson) {
-      return res.status(404).json({ error: 'Lesson not found' });
-    }
-
-    if (lesson.module.course.instructorId !== userId) {
-      return res.status(403).json({ error: 'Not authorized' });
-    }
+    const { lesson } = access;
 
     await prisma.lesson.delete({
-      where: { lessonId: lessonIdInt },
+      where: { lessonId: lesson.lessonId },
     });
 
     res.json({ message: 'Lesson deleted successfully' });

@@ -1,16 +1,9 @@
-const crypto = require('crypto');
 const bcrypt = require('bcrypt');
-const jwt = require('jsonwebtoken');
 const prisma = require('../utils/prisma');
 const { verifyFirebaseToken } = require('../services/firebase.service');
-const { sendLoginNotification, sendWelcomeWithPassword } = require('../services/email.service');
-const { getCookieOptions } = require('../utils/cookie.utils');
-
-function generateRandomPassword() {
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789';
-  const bytes = crypto.randomBytes(12);
-  return Array.from(bytes, (b) => chars[b % chars.length]).join('');
-}
+const { findOrCreateUserFromGoogleToken, sendPostAuthEmails } = require('../services/auth.service');
+const { setAuthCookie, clearAuthCookie, setAuthCookieAndBuildUserResponse } = require('../utils/auth.utils');
+const { BCRYPT_ROUNDS, REFRESH_FROM_PAYMENT_WINDOW_MS } = require('../config/constants');
 
 const register = async (req, res) => {
   try {
@@ -28,7 +21,7 @@ const register = async (req, res) => {
       return res.status(400).json({ error: 'User already exists' });
     }
 
-    const hashedPassword = await bcrypt.hash(password, 10);
+    const hashedPassword = await bcrypt.hash(password, BCRYPT_ROUNDS);
 
     let roleName = 'student';
     if (role === 'ADMIN') roleName = 'admin';
@@ -63,27 +56,12 @@ const register = async (req, res) => {
     });
 
     const roles = user.userRoles.map((ur) => ur.role.roleName);
-
-    const token = jwt.sign(
-      { userId: user.userId, roles },
-      process.env.JWT_SECRET || 'secret',
-      { expiresIn: '7d' }
-    );
-
-    const cookieOptions = getCookieOptions();
-    if (process.env.NODE_ENV !== 'production') {
-      delete cookieOptions.domain;
-    }
-    res.cookie('authToken', token, cookieOptions);
+    const { token, user: userPayload } = setAuthCookieAndBuildUserResponse(res, user, roles);
 
     res.status(201).json({
       message: 'User created successfully',
-      user: {
-        userId: user.userId,
-        email: user.email,
-        fullName: user.fullName,
-        roles,
-      },
+      token,
+      user: userPayload,
     });
   } catch (error) {
     console.error('Register error:', error);
@@ -121,27 +99,12 @@ const login = async (req, res) => {
     }
 
     const roles = user.userRoles.map((ur) => ur.role.roleName);
-
-    const token = jwt.sign(
-      { userId: user.userId, roles },
-      process.env.JWT_SECRET || 'secret',
-      { expiresIn: '7d' }
-    );
-
-    const cookieOptions = getCookieOptions();
-    if (process.env.NODE_ENV !== 'production') {
-      delete cookieOptions.domain;
-    }
-    res.cookie('authToken', token, cookieOptions);
+    const { token, user: userPayload } = setAuthCookieAndBuildUserResponse(res, user, roles);
 
     res.json({
       message: 'Login successful',
-      user: {
-        userId: user.userId,
-        email: user.email,
-        fullName: user.fullName,
-        roles,
-      },
+      token,
+      user: userPayload,
     });
   } catch (error) {
     console.error('Login error:', error);
@@ -154,114 +117,21 @@ const googleSignIn = async (req, res) => {
     const { idToken } = req.body;
 
     if (!idToken) {
-      console.error('Google sign-in: Missing ID token');
       return res.status(400).json({ error: 'ID token is required' });
     }
 
-    console.log('Google sign-in: Verifying token...');
-
     const decodedToken = await verifyFirebaseToken(idToken);
-    const { uid, email, name, picture } = decodedToken;
-
-    if (!email) {
-      console.error('Google sign-in: Email not found in token');
-      return res.status(400).json({ error: 'Email not found in token' });
-    }
-
-    console.log(`Google sign-in: Token verified for email: ${email}`);
-
-    let user = await prisma.user.findUnique({
-      where: { email },
-    });
-
-    const studentRole = await prisma.role.findUnique({
-      where: { roleName: 'student' },
-    });
-
-    if (!studentRole) {
-      console.error('Google sign-in: Student role not found. Run: npx prisma db seed');
-      return res.status(500).json({ error: 'Server configuration error. Please contact admin.' });
-    }
-
-    let isNewUser = false;
-
-    if (!user) {
-      isNewUser = true;
-      const plainPassword = generateRandomPassword();
-      const hashedPassword = await bcrypt.hash(plainPassword, 10);
-      const fullName = name || email.split('@')[0];
-
-      user = await prisma.user.create({
-        data: {
-          email,
-          fullName,
-          passwordHash: hashedPassword,
-          firebaseUid: uid,
-          userRoles: {
-            create: {
-              roleId: studentRole.roleId,
-            },
-          },
-        },
-        include: {
-          userRoles: {
-            include: {
-              role: true,
-            },
-          },
-        },
-      });
-
-      sendWelcomeWithPassword(user.email, user.fullName, plainPassword).catch((err) => {
-        console.error('Failed to send welcome email with password:', err);
-      });
-    } else {
-      if (!user.firebaseUid) {
-        await prisma.user.update({
-          where: { userId: user.userId },
-          data: { firebaseUid: uid },
-        });
-      }
-      user = await prisma.user.findUnique({
-        where: { userId: user.userId },
-        include: {
-          userRoles: {
-            include: {
-              role: true,
-            },
-          },
-        },
-      });
-    }
+    const { user, isNewUser } = await findOrCreateUserFromGoogleToken(decodedToken);
 
     const roles = user.userRoles.map((ur) => ur.role.roleName);
+    const { token, user: userPayload } = setAuthCookieAndBuildUserResponse(res, user, roles);
 
-    const token = jwt.sign(
-      { userId: user.userId, roles },
-      process.env.JWT_SECRET || 'secret',
-      { expiresIn: '7d' }
-    );
-
-    const cookieOptions = getCookieOptions();
-    if (process.env.NODE_ENV !== 'production') {
-      delete cookieOptions.domain;
-    }
-    res.cookie('authToken', token, cookieOptions);
-
-    if (!isNewUser) {
-      sendLoginNotification(user.email, user.fullName, 'google').catch((error) => {
-        console.error('Failed to send login notification email:', error);
-      });
-    }
+    sendPostAuthEmails(user, isNewUser);
 
     res.json({
       message: 'Google sign-in successful',
-      user: {
-        userId: user.userId,
-        email: user.email,
-        fullName: user.fullName,
-        roles,
-      },
+      token,
+      user: userPayload,
     });
   } catch (error) {
     console.error('Google sign-in error:', error);
@@ -340,7 +210,7 @@ const updateProfile = async (req, res) => {
     if (avatarUrl !== undefined) updateData.avatarUrl = avatarUrl || null;
     if (currentLevel !== undefined) updateData.currentLevel = currentLevel;
     if (newPassword && newPassword.length >= 6) {
-      updateData.passwordHash = await bcrypt.hash(newPassword, 10);
+      updateData.passwordHash = await bcrypt.hash(newPassword, BCRYPT_ROUNDS);
     }
 
     if (Object.keys(updateData).length === 0) {
@@ -405,12 +275,7 @@ const deleteOwnAccount = async (req, res) => {
       where: { userId: userIdInt },
     });
 
-    const cookieOptions = getCookieOptions();
-    if (process.env.NODE_ENV !== 'production') {
-      delete cookieOptions.domain;
-    }
-    res.cookie('authToken', '', { ...cookieOptions, maxAge: 0 });
-
+    clearAuthCookie(res);
     res.json({ message: 'Account deleted successfully' });
   } catch (error) {
     console.error('Delete account error:', error);
@@ -420,15 +285,7 @@ const deleteOwnAccount = async (req, res) => {
 
 const logout = async (req, res) => {
   try {
-    const cookieOptions = getCookieOptions();
-    if (process.env.NODE_ENV !== 'production') {
-      delete cookieOptions.domain;
-    }
-    res.cookie('authToken', '', {
-      ...cookieOptions,
-      maxAge: 0,
-    });
-
+    clearAuthCookie(res);
     res.json({ message: 'Logout successful' });
   } catch (error) {
     console.error('Logout error:', error);
@@ -471,38 +328,19 @@ const refreshFromPayment = async (req, res) => {
       return res.status(400).json({ error: 'Transaction not completed' });
     }
 
+    const createdAt = new Date(transaction.createdAt);
+    if (Date.now() - createdAt.getTime() > REFRESH_FROM_PAYMENT_WINDOW_MS) {
+      return res.status(400).json({ error: 'Refresh window expired. Please log in again.' });
+    }
+
     const user = transaction.order.user;
     const roles = user.userRoles.map((ur) => ur.role.roleName);
-
-    const token = jwt.sign(
-      { userId: user.userId, roles },
-      process.env.JWT_SECRET || 'secret',
-      { expiresIn: '7d' }
-    );
-
-    const cookieOptions = getCookieOptions();
-    if (process.env.NODE_ENV !== 'production') {
-      delete cookieOptions.domain;
-    }
-    console.log('[refreshFromPayment] Setting cookie with options:', cookieOptions);
-    console.log('[refreshFromPayment] Request origin:', req.headers.origin);
-    console.log('[refreshFromPayment] Request host:', req.headers.host);
-
-    res.cookie('authToken', token, cookieOptions);
-
-    res.setHeader('Access-Control-Allow-Credentials', 'true');
-    if (req.headers.origin) {
-      res.setHeader('Access-Control-Allow-Origin', req.headers.origin);
-    }
+    const { token, user: userPayload } = setAuthCookieAndBuildUserResponse(res, user, roles);
 
     res.json({
       message: 'Cookie refreshed successfully',
-      user: {
-        userId: user.userId,
-        email: user.email,
-        fullName: user.fullName,
-        roles,
-      },
+      token,
+      user: userPayload,
     });
   } catch (error) {
     console.error('Refresh from payment error:', error);

@@ -1,6 +1,12 @@
 const { GoogleGenerativeAI, GoogleGenerativeAIFetchError } = require('@google/generative-ai');
 
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || '');
+const GEMINI_KEY = process.env.GEMINI_API_KEY || '';
+if (!GEMINI_KEY || GEMINI_KEY === 'your-gemini-api-key-here') {
+  console.warn(
+    '[Gemini] GEMINI_API_KEY chưa được cấu hình hoặc đang dùng placeholder. Tính năng Generate Quiz / AI Tutor sẽ trả lỗi 400. Đặt key trong backend/.env (https://aistudio.google.com/apikey) và restart server.'
+  );
+}
+const genAI = new GoogleGenerativeAI(GEMINI_KEY);
 
 const MODEL_NAMES = [
   'gemini-flash-latest',
@@ -16,8 +22,9 @@ const tryModels = async (fn) => {
       return await fn(modelName);
     } catch (error) {
       lastError = error;
-      if (error instanceof GoogleGenerativeAIFetchError && error.status === 404) {
-        console.log(`Model ${modelName} not found, trying next model...`);
+      const status = error?.status ?? error?.statusCode;
+      if (error instanceof GoogleGenerativeAIFetchError && (status === 404 || status === 503 || status === 502)) {
+        console.log(`[Gemini] Model ${modelName} ${status === 404 ? 'not found' : 'unavailable (503/502)'}, trying next...`);
         continue;
       }
       throw error;
@@ -64,6 +71,13 @@ const handleGeminiError = (error, operation) => {
       authError.statusCode = error.status;
       throw authError;
     }
+    if (error.status === 400 && (error.message || '').includes('API key not valid')) {
+      const keyError = new Error(
+        'GEMINI_API_KEY chưa được cấu hình hoặc không hợp lệ. Vui lòng đặt API key trong file backend/.env (lấy key tại https://aistudio.google.com/apikey) và khởi động lại server.'
+      );
+      keyError.statusCode = 400;
+      throw keyError;
+    }
     const apiError = new Error('Lỗi kết nối với dịch vụ AI. Vui lòng thử lại sau.');
     apiError.statusCode = error.status || 500;
     throw apiError;
@@ -80,9 +94,11 @@ const retryWithBackoff = async (fn, maxRetries = 3, baseDelay = 1000, operation 
       return await fn();
     } catch (error) {
       lastError = error;
-      if (error instanceof Error && error.isRateLimit && attempt < maxRetries) {
-        const delay = error.retryAfter ? error.retryAfter * 1000 : baseDelay * Math.pow(2, attempt);
-        console.log(`[${operation}] Retry attempt ${attempt + 1}/${maxRetries} after ${delay}ms`);
+      const status = error?.status ?? error?.statusCode;
+      const isRetryable = error?.isRateLimit || status === 503 || status === 502;
+      if (isRetryable && attempt < maxRetries) {
+        const delay = error?.retryAfter ? error.retryAfter * 1000 : baseDelay * Math.pow(2, attempt);
+        console.log(`[${operation}] Retry ${attempt + 1}/${maxRetries} after ${delay}ms (${status === 503 || status === 502 ? 'service busy' : 'rate limit'})`);
         await new Promise((resolve) => setTimeout(resolve, delay));
         continue;
       }
@@ -92,40 +108,71 @@ const retryWithBackoff = async (fn, maxRetries = 3, baseDelay = 1000, operation 
   throw lastError;
 };
 
-const generateQuizFromContent = async (content, numQuestions = 5) => {
+/** Normalize one question from AI: support content/contentText/question and answers/options */
+function normalizeAiQuestion(q) {
+  const content = (q.content || q.contentText || q.question || '').trim();
+  const rawAnswers = q.answers || q.options || [];
+  const answers = rawAnswers.map((a, j) => ({
+    content: (a.content || a.contentText || a.text || '').trim(),
+    isCorrect: !!a.isCorrect,
+    orderIndex: j,
+  })).filter((a) => a.content.length > 0);
+  const correctCount = answers.filter((a) => a.isCorrect).length;
+  if (answers.length >= 2 && correctCount !== 1) {
+    answers[0].isCorrect = true;
+    answers.forEach((a, i) => { if (i > 0) a.isCorrect = false; });
+  }
+  return { content, answers };
+}
+
+/** Validate and filter: keep only questions with non-empty content and at least 2 answers, exactly one correct */
+function filterValidQuestions(normalized) {
+  return normalized.filter((q) => q.content.length > 0 && q.answers.length >= 2);
+}
+
+const generateQuizFromContent = async (content, numQuestions = 5, existingQuestionTexts = []) => {
   try {
+    const excludeBlock =
+      existingQuestionTexts.length > 0
+        ? `
+
+IMPORTANT - DO NOT DUPLICATE: The quiz already has the following questions. You MUST generate completely NEW questions with different wording and different topics/focus. Do not copy or rephrase these:
+${existingQuestionTexts.map((t, i) => `${i + 1}. ${t}`).join('\n')}
+`
+        : '';
+
     return await retryWithBackoff(
       () =>
         tryModels(async (modelName) => {
           const model = genAI.getGenerativeModel({ model: modelName });
-          const prompt = `Generate ${numQuestions} multiple choice questions based on the following educational content. 
-    Return the questions in JSON format with this structure:
-    {
-      "questions": [
-        {
-          "content": "question text",
-          "answers": [
-            {"content": "answer option", "isCorrect": true/false},
-            ...
-          ]
-        },
-        ...
-      ]
-    }
-    
-    Content:
-    ${content}
-    
-    Make sure to have exactly 4 answer options per question, with only one correct answer.`;
+          const prompt = `Generate ${numQuestions} multiple choice questions based on the following educational content.
+${excludeBlock}
+
+You must return a single JSON object with exactly one key: "questions" (an array). No other keys.
+Each question must have:
+- "content": string (the question text, not empty)
+- "answers": array of exactly 4 objects, each with "content": string (option text) and "isCorrect": boolean (exactly one must be true per question)
+
+Format:
+{"questions":[{"content":"question text","answers":[{"content":"option A","isCorrect":false},{"content":"option B","isCorrect":true},{"content":"option C","isCorrect":false},{"content":"option D","isCorrect":false}]}]}
+
+Rules: 4 answer options per question, exactly one isCorrect: true. Question and all option texts must be non-empty and clear. Generate NEW questions only.
+
+Content:
+${content}`;
 
           const result = await model.generateContent(prompt);
           const response = await result.response;
           const text = response.text();
           const jsonMatch = text.match(/\{[\s\S]*\}/);
-          if (jsonMatch) {
-            return JSON.parse(jsonMatch[0]);
-          }
-          throw new Error('Failed to parse quiz from AI response');
+          if (!jsonMatch) throw new Error('Failed to parse quiz from AI response');
+          const parsed = JSON.parse(jsonMatch[0]);
+          const rawList = parsed.questions || parsed.data?.questions || [];
+          if (!Array.isArray(rawList)) throw new Error('AI did not return valid questions');
+          const normalized = rawList.map(normalizeAiQuestion);
+          const valid = filterValidQuestions(normalized);
+          if (valid.length === 0) throw new Error('AI did not return valid questions');
+          return { questions: valid };
         }),
       3,
       1000,

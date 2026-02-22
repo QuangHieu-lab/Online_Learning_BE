@@ -1,6 +1,7 @@
 const crypto = require('crypto');
 const qs = require('qs');
 require('dotenv').config();
+const { VNPAY_ORDER_EXPIRE_MS } = require('../config/constants');
 
 const VNPAY_TMN_CODE = process.env.VNP_TMN_CODE || process.env.VNPAY_TMN_CODE || '';
 const VNPAY_HASH_SECRET = process.env.VNP_HASH_SECRET || process.env.VNPAY_HASH_SECRET || '';
@@ -60,7 +61,7 @@ const createVNPayPaymentUrl = (paymentData) => {
   const seconds = pad(now.getSeconds());
   const createDate = `${year}${month}${day}${hours}${minutes}${seconds}`;
 
-  const expireDate = new Date(now.getTime() + 15 * 60 * 1000);
+  const expireDate = new Date(now.getTime() + VNPAY_ORDER_EXPIRE_MS);
   const vnp_ExpireDate = `${expireDate.getFullYear()}${pad(expireDate.getMonth() + 1)}${pad(expireDate.getDate())}${pad(expireDate.getHours())}${pad(expireDate.getMinutes())}${pad(expireDate.getSeconds())}`;
 
   const orderInfoClean = toUnsignedVietnamese(orderDescription) || `Thanh toan don hang ${orderId}`;

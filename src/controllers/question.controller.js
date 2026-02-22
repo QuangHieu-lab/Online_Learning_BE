@@ -1,47 +1,54 @@
 const prisma = require('../utils/prisma');
+const { ensureQuestionOwnership, ensureAnswerOwnership, sendAccessError } = require('../utils/access.helpers');
 
 const createQuestion = async (req, res) => {
   try {
     const { quizId } = req.params;
-    const quizIdInt = parseInt(quizId);
     const { contentText, type, orderIndex, questionAnswers } = req.body;
     const userId = req.userId;
 
-    if (isNaN(quizIdInt)) {
-      return res.status(400).json({ error: 'Invalid quiz ID' });
+    const access = await ensureQuestionOwnership(quizId, userId, false);
+    if (access.error) {
+      return sendAccessError(res, access.error);
     }
+    const quizIdInt = access.quiz.quizId;
 
-    const quiz = await prisma.quiz.findUnique({
-      where: { quizId: quizIdInt },
-      include: {
-        lesson: {
-          include: {
-            module: {
-              include: {
-                course: true,
-              },
-            },
-          },
-        },
-      },
-    });
-
-    if (!quiz) {
-      return res.status(404).json({ error: 'Quiz not found' });
+    const contentTextTrimmed = (contentText != null ? String(contentText) : '').trim();
+    if (!contentTextTrimmed) {
+      return res.status(400).json({ error: 'Question content is required' });
     }
+    const questionType = type || 'single_choice';
+    const answers = Array.isArray(questionAnswers) ? questionAnswers : [];
+    const validAnswers = answers
+      .map((a, i) => ({
+        contentText: (a.contentText != null ? String(a.contentText) : '').trim(),
+        isCorrect: !!a.isCorrect,
+        orderIndex: a.orderIndex != null ? a.orderIndex : i,
+      }))
+      .filter((a) => a.contentText.length > 0);
 
-    if (quiz.lesson.module.course.instructorId !== userId) {
-      return res.status(403).json({ error: 'Not authorized' });
+    if (validAnswers.length < 2) {
+      return res.status(400).json({ error: 'At least 2 answers required' });
+    }
+    if (questionType === 'single_choice') {
+      const correctCount = validAnswers.filter((a) => a.isCorrect).length;
+      if (correctCount !== 1) {
+        return res.status(400).json({ error: 'Exactly one correct answer required for single_choice' });
+      }
     }
 
     const question = await prisma.question.create({
       data: {
         quizId: quizIdInt,
-        contentText,
-        type: type || 'single_choice',
-        orderIndex: orderIndex || 0,
+        contentText: contentTextTrimmed,
+        type: questionType,
+        orderIndex: orderIndex != null ? orderIndex : 0,
         questionAnswers: {
-          create: questionAnswers || [],
+          create: validAnswers.map((a, i) => ({
+            contentText: a.contentText,
+            isCorrect: a.isCorrect,
+            orderIndex: a.orderIndex != null ? a.orderIndex : i,
+          })),
         },
       },
       include: {
@@ -59,40 +66,14 @@ const createQuestion = async (req, res) => {
 const updateQuestion = async (req, res) => {
   try {
     const { questionId } = req.params;
-    const questionIdInt = parseInt(questionId);
     const { contentText, type, orderIndex } = req.body;
     const userId = req.userId;
 
-    if (isNaN(questionIdInt)) {
-      return res.status(400).json({ error: 'Invalid question ID' });
+    const access = await ensureQuestionOwnership(questionId, userId, true);
+    if (access.error) {
+      return sendAccessError(res, access.error);
     }
-
-    const question = await prisma.question.findUnique({
-      where: { questionId: questionIdInt },
-      include: {
-        quiz: {
-          include: {
-            lesson: {
-              include: {
-                module: {
-                  include: {
-                    course: true,
-                  },
-                },
-              },
-            },
-          },
-        },
-      },
-    });
-
-    if (!question) {
-      return res.status(404).json({ error: 'Question not found' });
-    }
-
-    if (question.quiz.lesson.module.course.instructorId !== userId) {
-      return res.status(403).json({ error: 'Not authorized' });
-    }
+    const questionIdInt = access.question.questionId;
 
     const updatedQuestion = await prisma.question.update({
       where: { questionId: questionIdInt },
@@ -116,42 +97,15 @@ const updateQuestion = async (req, res) => {
 const deleteQuestion = async (req, res) => {
   try {
     const { questionId } = req.params;
-    const questionIdInt = parseInt(questionId);
     const userId = req.userId;
 
-    if (isNaN(questionIdInt)) {
-      return res.status(400).json({ error: 'Invalid question ID' });
-    }
-
-    const question = await prisma.question.findUnique({
-      where: { questionId: questionIdInt },
-      include: {
-        quiz: {
-          include: {
-            lesson: {
-              include: {
-                module: {
-                  include: {
-                    course: true,
-                  },
-                },
-              },
-            },
-          },
-        },
-      },
-    });
-
-    if (!question) {
-      return res.status(404).json({ error: 'Question not found' });
-    }
-
-    if (question.quiz.lesson.module.course.instructorId !== userId) {
-      return res.status(403).json({ error: 'Not authorized' });
+    const access = await ensureQuestionOwnership(questionId, userId, true);
+    if (access.error) {
+      return sendAccessError(res, access.error);
     }
 
     await prisma.question.delete({
-      where: { questionId: questionIdInt },
+      where: { questionId: access.question.questionId },
     });
 
     res.json({ message: 'Question deleted successfully' });
@@ -164,40 +118,14 @@ const deleteQuestion = async (req, res) => {
 const createAnswer = async (req, res) => {
   try {
     const { questionId } = req.params;
-    const questionIdInt = parseInt(questionId);
     const { contentText, isCorrect, orderIndex } = req.body;
     const userId = req.userId;
 
-    if (isNaN(questionIdInt)) {
-      return res.status(400).json({ error: 'Invalid question ID' });
+    const access = await ensureQuestionOwnership(questionId, userId, true);
+    if (access.error) {
+      return sendAccessError(res, access.error);
     }
-
-    const question = await prisma.question.findUnique({
-      where: { questionId: questionIdInt },
-      include: {
-        quiz: {
-          include: {
-            lesson: {
-              include: {
-                module: {
-                  include: {
-                    course: true,
-                  },
-                },
-              },
-            },
-          },
-        },
-      },
-    });
-
-    if (!question) {
-      return res.status(404).json({ error: 'Question not found' });
-    }
-
-    if (question.quiz.lesson.module.course.instructorId !== userId) {
-      return res.status(403).json({ error: 'Not authorized' });
-    }
+    const questionIdInt = access.question.questionId;
 
     const answer = await prisma.questionAnswer.create({
       data: {
@@ -218,44 +146,14 @@ const createAnswer = async (req, res) => {
 const updateAnswer = async (req, res) => {
   try {
     const { answerId } = req.params;
-    const answerIdInt = parseInt(answerId);
     const { contentText, isCorrect, orderIndex } = req.body;
     const userId = req.userId;
 
-    if (isNaN(answerIdInt)) {
-      return res.status(400).json({ error: 'Invalid answer ID' });
+    const access = await ensureAnswerOwnership(answerId, userId);
+    if (access.error) {
+      return sendAccessError(res, access.error);
     }
-
-    const answer = await prisma.questionAnswer.findUnique({
-      where: { answerId: answerIdInt },
-      include: {
-        question: {
-          include: {
-            quiz: {
-              include: {
-                lesson: {
-                  include: {
-                    module: {
-                      include: {
-                        course: true,
-                      },
-                    },
-                  },
-                },
-              },
-            },
-          },
-        },
-      },
-    });
-
-    if (!answer) {
-      return res.status(404).json({ error: 'Answer not found' });
-    }
-
-    if (answer.question.quiz.lesson.module.course.instructorId !== userId) {
-      return res.status(403).json({ error: 'Not authorized' });
-    }
+    const answerIdInt = access.answer.answerId;
 
     const updatedAnswer = await prisma.questionAnswer.update({
       where: { answerId: answerIdInt },
@@ -276,46 +174,15 @@ const updateAnswer = async (req, res) => {
 const deleteAnswer = async (req, res) => {
   try {
     const { answerId } = req.params;
-    const answerIdInt = parseInt(answerId);
     const userId = req.userId;
 
-    if (isNaN(answerIdInt)) {
-      return res.status(400).json({ error: 'Invalid answer ID' });
-    }
-
-    const answer = await prisma.questionAnswer.findUnique({
-      where: { answerId: answerIdInt },
-      include: {
-        question: {
-          include: {
-            quiz: {
-              include: {
-                lesson: {
-                  include: {
-                    module: {
-                      include: {
-                        course: true,
-                      },
-                    },
-                  },
-                },
-              },
-            },
-          },
-        },
-      },
-    });
-
-    if (!answer) {
-      return res.status(404).json({ error: 'Answer not found' });
-    }
-
-    if (answer.question.quiz.lesson.module.course.instructorId !== userId) {
-      return res.status(403).json({ error: 'Not authorized' });
+    const access = await ensureAnswerOwnership(answerId, userId);
+    if (access.error) {
+      return sendAccessError(res, access.error);
     }
 
     await prisma.questionAnswer.delete({
-      where: { answerId: answerIdInt },
+      where: { answerId: access.answer.answerId },
     });
 
     res.json({ message: 'Answer deleted successfully' });

@@ -3,6 +3,10 @@ const cors = require('cors');
 const cookieParser = require('cookie-parser');
 require('dotenv').config();
 
+if (process.env.NODE_ENV === 'production' && !process.env.JWT_SECRET) {
+  throw new Error('JWT_SECRET is required in production');
+}
+
 process.on('unhandledRejection', (reason, promise) => {
   console.error('[Server] Unhandled Rejection at:', promise, 'reason:', reason);
 });
@@ -12,6 +16,7 @@ const path = require('path');
 
 const authRoutes = require('./routes/auth.routes');
 const courseRoutes = require('./routes/course.routes');
+const lessonResourceRoutes = require('./routes/lessonResource.routes');
 const lessonRoutes = require('./routes/lesson.routes');
 const videoRoutes = require('./routes/video.routes');
 const quizRoutes = require('./routes/quiz.routes');
@@ -23,6 +28,13 @@ const cartRoutes = require('./routes/cart.routes')
 const certificateRoutes = require('./routes/certificate.routes');
 const app = express();
 const httpServer = createServer(app);
+
+// Allow long-running uploads (e.g. large video to Firebase) without connection reset
+const UPLOAD_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
+httpServer.timeout = UPLOAD_TIMEOUT_MS;
+httpServer.keepAliveTimeout = UPLOAD_TIMEOUT_MS;
+httpServer.headersTimeout = UPLOAD_TIMEOUT_MS + 1000;
+
 const io = new Server(httpServer, {
   cors: {
     origin: process.env.FRONTEND_URL || 'http://127.0.0.1:5173',
@@ -85,7 +97,9 @@ app.use(
 
 app.use('/api/auth', authRoutes);
 app.use('/api/courses', courseRoutes);
+app.use('/api/lessons', lessonResourceRoutes);
 app.use('/api/lessons', lessonRoutes);
+app.use('/api/resources', lessonResourceRoutes.deleteRouter);
 app.use('/api/videos', videoRoutes);
 app.use('/api/quizzes', quizRoutes);
 app.use('/api/ai', aiRoutes);
@@ -96,6 +110,17 @@ app.use('/api/cart', cartRoutes);
 app.use('/api/certificates', certificateRoutes);
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', message: 'Server is running' });
+});
+
+app.use((req, res) => {
+  res.status(404).json({ error: 'Not found' });
+});
+
+app.use((err, req, res, next) => {
+  console.error('[Server] Error:', err);
+  const status = err.status || err.statusCode || 500;
+  const message = err.message || 'Internal server error';
+  res.status(status).json({ error: message });
 });
 
 io.on('connection', (socket) => {

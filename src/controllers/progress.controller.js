@@ -1,5 +1,8 @@
 const prisma = require('../utils/prisma');
-const { checkAndIssueCertificate } = require('./certificate.controller');
+const { ensureCertificateIssuedIfEligible } = require('./certificate.controller');
+const { mapPrismaError } = require('../utils/error.utils');
+const { PROGRESS_STATUS_COMPLETED, PROGRESS_STATUS_IN_PROGRESS, PROGRESS_STATUS_NOT_STARTED } = require('../config/constants');
+const { computeCourseProgress } = require('../utils/progress.utils');
 
 const updateProgress = async (req, res) => {
   try {
@@ -40,11 +43,11 @@ const updateProgress = async (req, res) => {
       return res.status(403).json({ error: 'You must be enrolled in this course to track progress' });
     }
 
-    let progressStatus = 'not_started';
-    if (status === 'completed' || status === true) {
-      progressStatus = 'completed';
-    } else if (status === 'in_progress' || lastWatchedSecond > 0) {
-      progressStatus = 'in_progress';
+    let progressStatus = PROGRESS_STATUS_NOT_STARTED;
+    if (status === PROGRESS_STATUS_COMPLETED || status === true) {
+      progressStatus = PROGRESS_STATUS_COMPLETED;
+    } else if (status === PROGRESS_STATUS_IN_PROGRESS || lastWatchedSecond > 0) {
+      progressStatus = PROGRESS_STATUS_IN_PROGRESS;
     }
 
     const learningProgress = await prisma.learningProgress.upsert({
@@ -57,22 +60,22 @@ const updateProgress = async (req, res) => {
       update: {
         status: progressStatus,
         lastWatchedSecond: lastWatchedSecond || undefined,
-        completedAt: progressStatus === 'completed' ? new Date() : undefined,
+        completedAt: progressStatus === PROGRESS_STATUS_COMPLETED ? new Date() : undefined,
       },
       create: {
         enrollmentId: enrollment.enrollmentId,
         lessonId: lessonIdInt,
         status: progressStatus,
         lastWatchedSecond: lastWatchedSecond || 0,
-        completedAt: progressStatus === 'completed' ? new Date() : null,
+        completedAt: progressStatus === PROGRESS_STATUS_COMPLETED ? new Date() : null,
       },
     });
 let certificate = null;
 
     // Chỉ kiểm tra khi user đã hoàn thành bài học này
-    if (progressStatus === 'completed') {
+    if (progressStatus === PROGRESS_STATUS_COMPLETED) {
       try {
-        certificate = await checkAndIssueCertificate(
+        certificate = await ensureCertificateIssuedIfEligible(
           userId,
           lesson.module.course.courseId
         );
@@ -123,14 +126,15 @@ let certificate = null;
             data: {
               status: req.body.status || 'in_progress',
               lastWatchedSecond: req.body.lastWatchedSecond || undefined,
-              completedAt: req.body.status === 'completed' ? new Date() : undefined,
+              completedAt: req.body.status === PROGRESS_STATUS_COMPLETED ? new Date() : undefined,
             },
           });
           return res.json(learningProgress);
         }
       }
     }
-    res.status(500).json({ error: 'Internal server error' });
+    const { status, message } = mapPrismaError(error);
+    return res.status(status).json({ error: message });
   }
 };
 
@@ -186,9 +190,8 @@ const getProgress = async (req, res) => {
     });
 
     const progressMap = new Map(progressRecords.map((p) => [p.lessonId, p]));
-
-    const completedLessons = progressRecords.filter((p) => p.status === 'completed').length;
-    const totalLessons = allLessonIds.length;
+    const enrollmentWithProgress = { ...enrollment, learningProgress: progressRecords };
+    const { completedCount: completedLessons, total: totalLessons, percent: percentage } = computeCourseProgress(enrollmentWithProgress, course);
 
     const progress = {
       courseId: course.courseId,
@@ -196,7 +199,7 @@ const getProgress = async (req, res) => {
       enrollmentId: enrollment.enrollmentId,
       totalLessons,
       completedLessons,
-      percentage: totalLessons > 0 ? Math.round((completedLessons / totalLessons) * 100) : 0,
+      percentage,
       modules: course.modules.map((module) => ({
         moduleId: module.moduleId,
         moduleTitle: module.title,
@@ -205,7 +208,7 @@ const getProgress = async (req, res) => {
           return {
             lessonId: lesson.lessonId,
             lessonTitle: lesson.title,
-            status: progressRecord?.status || 'not_started',
+            status: progressRecord?.status || PROGRESS_STATUS_NOT_STARTED,
             lastWatchedSecond: progressRecord?.lastWatchedSecond || 0,
             completedAt: progressRecord?.completedAt || null,
           };
@@ -242,22 +245,14 @@ const getUserProgress = async (req, res) => {
 
     const progress = enrollments.map((enrollment) => {
       const course = enrollment.course;
-      const allLessonIds = course.modules.flatMap((module) =>
-        module.lessons.map((lesson) => lesson.lessonId)
-      );
-      const completedLessons = enrollment.learningProgress.filter(
-        (p) => p.status === 'completed'
-      ).length;
-      const totalLessons = allLessonIds.length;
-
+      const { completedCount: completedLessons, total: totalLessons, percent: percentage } = computeCourseProgress(enrollment, course);
       return {
         courseId: course.courseId,
         courseTitle: course.title,
         enrollmentId: enrollment.enrollmentId,
         totalLessons,
         completedLessons,
-        percentage:
-          totalLessons > 0 ? Math.round((completedLessons / totalLessons) * 100) : 0,
+        percentage,
       };
     });
 

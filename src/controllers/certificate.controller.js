@@ -1,79 +1,6 @@
 const prisma = require('../utils/prisma');
-const { v4: uuidv4 } = require('uuid'); // Dùng để tạo serialNumber ngẫu nhiên
-
-// 1. Hàm nội bộ: Kiểm tra và Cấp chứng chỉ (Gọi hàm này khi User học xong bài cuối)
-const checkAndIssueCertificate = async (userId, courseId) => {
-  try {
-    // B1: Lấy thông tin Enrollment và tiến độ
-    const enrollment = await prisma.enrollment.findUnique({
-      where: {
-        userId_courseId: { userId, courseId }
-      },
-      include: {
-        learningProgress: true,
-        course: {
-            include: {
-                modules: { include: { lessons: true } }
-            }
-        },
-        quizAttempts: true // Lấy điểm thi để tính Grade
-      }
-    });
-
-    if (!enrollment) return null;
-
-    // B2: Kiểm tra xem đã học hết 100% chưa
-    // Đếm tổng số bài học trong khóa
-    let totalLessons = 0;
-    enrollment.course.modules.forEach(m => totalLessons += m.lessons.length);
-    
-    // Đếm số bài đã completed
-    const completedLessons = enrollment.learningProgress.filter(p => p.status === 'completed').length;
-
-    // Nếu chưa học xong -> Không cấp
-    if (completedLessons < totalLessons) return null;
-
-    // B3: Kiểm tra xem chứng chỉ đã tồn tại chưa (Tránh tạo trùng)
-    const existingCert = await prisma.certificate.findUnique({
-      where: { enrollmentId: enrollment.enrollmentId }
-    });
-
-    if (existingCert) return existingCert;
-
-    // B4: Tính điểm trung bình (Grade) từ các bài Quiz (Nếu có)
-    let finalGrade = 0;
-    if (enrollment.quizAttempts.length > 0) {
-        // Logic đơn giản: Lấy điểm cao nhất của mỗi quiz, rồi tính trung bình
-        // (Bạn có thể tùy chỉnh logic này phức tạp hơn tùy nghiệp vụ)
-        const totalScore = enrollment.quizAttempts.reduce((sum, attempt) => sum + Number(attempt.totalScore || 0), 0);
-        finalGrade = totalScore / enrollment.quizAttempts.length;
-    }
-
-    // B5: Tạo chứng chỉ mới vào bảng 'certificates'
-    const newCert = await prisma.certificate.create({
-      data: {
-        userId: userId,
-        courseId: courseId,
-        enrollmentId: enrollment.enrollmentId,
-        serialNumber: `CERT-${uuidv4().split('-')[0].toUpperCase()}-${Date.now()}`, // VD: CERT-A1B2-170123456
-        issuedAt: new Date(),
-        pdfUrl: null // Bạn có thể update link PDF sau khi generate file
-      }
-    });
-
-    // B6: Cập nhật trạng thái Enrollment thành 'completed'
-    await prisma.enrollment.update({
-        where: { enrollmentId: enrollment.enrollmentId },
-        data: { status: 'completed' }
-    });
-
-    return { ...newCert, grade: finalGrade }; // Trả về kèm điểm để FE hiện (dù DB không lưu điểm)
-
-  } catch (error) {
-    console.error("Issue Certificate Error:", error);
-    return null;
-  }
-};
+const { GRADE_A_MIN, GRADE_B_MIN } = require('../config/constants');
+const { ensureCertificateIssuedIfEligible, computeGradeFromAttempts } = require('../services/certificate.service');
 
 // 2. API Public: Lấy danh sách chứng chỉ của User (Cho trang My Accomplishments)
 const getMyCertificates = async (req, res) => {
@@ -103,12 +30,10 @@ const getMyCertificates = async (req, res) => {
 
     // Map dữ liệu trả về cho đúng format UI
     const result = certificates.map(cert => {
-        // Tính lại điểm để hiển thị (vì DB không lưu cột grade)
-        let grade = 100; // Mặc định 100 nếu không có quiz
-        if (cert.enrollment && cert.enrollment.quizAttempts.length > 0) {
-             const total = cert.enrollment.quizAttempts.reduce((sum, q) => sum + Number(q.totalScore || 0), 0);
-             grade = total / cert.enrollment.quizAttempts.length;
-        }
+        const grade =
+          cert.enrollment && cert.enrollment.quizAttempts.length > 0
+            ? computeGradeFromAttempts(cert.enrollment.quizAttempts)
+            : 100;
 
         return {
             id: cert.certificateId,
@@ -118,7 +43,7 @@ const getMyCertificates = async (req, res) => {
             issuedAt: cert.issuedAt,
             serialNumber: cert.serialNumber,
             grade: grade.toFixed(1), // VD: 95.0
-            gradeLetter: grade >= 90 ? 'A' : (grade >= 80 ? 'B' : 'Pass'), // Logic xếp loại giả lập
+            gradeLetter: grade >= GRADE_A_MIN ? 'A' : (grade >= GRADE_B_MIN ? 'B' : 'Pass'),
             pdfUrl: cert.pdfUrl
         };
     });
@@ -131,4 +56,4 @@ const getMyCertificates = async (req, res) => {
   }
 };
 
-module.exports = { checkAndIssueCertificate, getMyCertificates };
+module.exports = { ensureCertificateIssuedIfEligible, getMyCertificates };

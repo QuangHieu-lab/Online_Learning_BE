@@ -6,11 +6,13 @@ const {
   getAIHint,
   analyzeKnowledgeGaps,
 } = require('../services/gemini.service');
+const { handleAIOrServiceError } = require('../utils/error.utils');
+const { DEFAULT_PASSING_SCORE, DEFAULT_TIME_LIMIT_MINUTES } = require('../config/constants');
 
 const generateQuiz = async (req, res) => {
   try {
     const { lessonId } = req.params;
-    const { numQuestions } = req.body;
+    const { numQuestions, existingQuestionTexts } = req.body;
     const userId = req.userId;
     const lessonIdInt = parseInt(lessonId);
 
@@ -43,24 +45,19 @@ const generateQuiz = async (req, res) => {
       ${lesson.mediaUrl ? `Media: ${lesson.mediaUrl}` : ''}
     `;
 
-    const generatedQuiz = await generateQuizFromContent(content, numQuestions || 5);
+    const excludeTexts = Array.isArray(existingQuestionTexts)
+      ? existingQuestionTexts.filter((t) => t != null && String(t).trim()).map((t) => String(t).trim())
+      : [];
+    const generatedQuiz = await generateQuizFromContent(content, numQuestions || 5, excludeTexts);
 
     res.json({
       message: 'Quiz generated successfully',
       questions: generatedQuiz.questions,
     });
   } catch (error) {
-    console.error('Generate quiz error:', error);
-    const customError = error;
-    if (customError.isRateLimit) {
-      return res.status(429).json({
-        error: customError.message || 'Hệ thống AI đang bận một chút, bạn vui lòng đợi một lúc rồi thử lại nhé!',
-        retryAfter: customError.retryAfter,
-      });
-    }
-    const statusCode = customError.statusCode || 500;
-    const errorMessage = customError.message || 'Failed to generate quiz';
-    res.status(statusCode).json({ error: errorMessage });
+    return handleAIOrServiceError(error, res, {
+      defaultMessage: 'Hệ thống AI đang bận một chút, bạn vui lòng đợi một lúc rồi thử lại nhé!',
+    });
   }
 };
 
@@ -149,17 +146,9 @@ ${quizContent ? `\nQuizzes:\n${quizContent}` : ''}
 
     res.json(responsePayload);
   } catch (error) {
-    console.error('Chat with tutor error:', error);
-    const customError = error;
-    if (customError.isRateLimit) {
-      return res.status(429).json({
-        error: customError.message || 'Hệ thống AI đang bận một chút, bạn vui lòng đợi một lúc rồi thử lại nhé!',
-        retryAfter: customError.retryAfter,
-      });
-    }
-    const statusCode = customError.statusCode || 500;
-    const errorMessage = customError.message || 'Failed to get AI response';
-    res.status(statusCode).json({ error: errorMessage });
+    return handleAIOrServiceError(error, res, {
+      defaultMessage: 'Failed to get AI response',
+    });
   }
 };
 
@@ -243,17 +232,7 @@ const getHint = async (req, res) => {
 
     res.json({ hint });
   } catch (error) {
-    console.error('Get hint error:', error);
-    const customError = error;
-    if (customError.isRateLimit) {
-      return res.status(429).json({
-        error: customError.message || 'Hệ thống AI đang bận một chút, bạn vui lòng đợi một lúc rồi thử lại nhé!',
-        retryAfter: customError.retryAfter,
-      });
-    }
-    const statusCode = customError.statusCode || 500;
-    const errorMessage = customError.message || 'Failed to get hint';
-    res.status(statusCode).json({ error: errorMessage });
+    return handleAIOrServiceError(error, res, { defaultMessage: 'Failed to get hint' });
   }
 };
 
@@ -362,24 +341,127 @@ const getKnowledgeGaps = async (req, res) => {
 
     res.json(analysis);
   } catch (error) {
-    console.error('Get knowledge gaps error:', error);
-    const customError = error;
-    if (customError.isRateLimit) {
-      return res.status(429).json({
-        error: customError.message || 'Hệ thống AI đang bận một chút, bạn vui lòng đợi một lúc rồi thử lại nhé!',
-        retryAfter: customError.retryAfter,
-        gaps: [],
-        overall: 'Không thể phân tích lỗ hổng kiến thức vào lúc này. Vui lòng thử lại sau.',
+    return handleAIOrServiceError(error, res, {
+      defaultMessage: 'Failed to analyze knowledge gaps',
+    });
+  }
+};
+
+/** Normalize one question from payload (content/contentText/question, answers/options) and ensure exactly one correct */
+function normalizeApplyQuestion(q) {
+  const content = (q.content || q.contentText || q.question || '').trim();
+  const rawAnswers = q.answers || q.options || [];
+  const answers = rawAnswers.map((a, j) => ({
+    contentText: (a.content || a.contentText || a.text || '').trim(),
+    isCorrect: !!a.isCorrect,
+    orderIndex: j,
+  })).filter((a) => a.contentText.length > 0);
+  const correctCount = answers.filter((a) => a.isCorrect).length;
+  if (answers.length >= 2 && correctCount !== 1) {
+    answers[0].isCorrect = true;
+    answers.forEach((a, i) => { if (i > 0) a.isCorrect = false; });
+  }
+  return { content, answers };
+}
+
+/** POST /api/ai/lessons/:lessonId/apply-quiz - create quiz + questions from Gemini payload (lecturer only) */
+const applyGeneratedQuiz = async (req, res) => {
+  try {
+    const { lessonId } = req.params;
+    const { title, timeLimitMinutes, passingScore, questions } = req.body;
+    const userId = req.userId;
+    const lessonIdInt = parseInt(lessonId);
+
+    if (isNaN(lessonIdInt)) {
+      return res.status(400).json({ error: 'Invalid lesson ID' });
+    }
+    if (!questions || !Array.isArray(questions) || questions.length === 0) {
+      return res.status(400).json({ error: 'questions array is required' });
+    }
+
+    const lesson = await prisma.lesson.findUnique({
+      where: { lessonId: lessonIdInt },
+      include: { module: { include: { course: true } } },
+    });
+    if (!lesson) {
+      return res.status(404).json({ error: 'Lesson not found' });
+    }
+    if (lesson.module.course.instructorId !== userId) {
+      return res.status(403).json({ error: 'Not authorized' });
+    }
+
+    const normalized = questions.map(normalizeApplyQuestion);
+    const validQuestions = normalized.filter((q) => q.content.length > 0 && q.answers.length >= 2);
+    if (validQuestions.length === 0) {
+      return res.status(400).json({ error: 'No valid questions to save' });
+    }
+
+    const existingQuiz = await prisma.quiz.findUnique({
+      where: { lessonId: lessonIdInt },
+      include: { questions: true },
+    });
+    if (existingQuiz) {
+      await prisma.quiz.delete({ where: { quizId: existingQuiz.quizId } });
+    }
+
+    const quiz = await prisma.quiz.create({
+      data: {
+        lessonId: lessonIdInt,
+        title: title || 'Quiz',
+        timeLimitMinutes: timeLimitMinutes != null ? parseInt(timeLimitMinutes, 10) : DEFAULT_TIME_LIMIT_MINUTES,
+        passingScore: passingScore != null ? parseInt(passingScore, 10) : DEFAULT_PASSING_SCORE,
+      },
+    });
+
+    for (let i = 0; i < validQuestions.length; i++) {
+      const q = validQuestions[i];
+      const questionAnswers = q.answers.map((a, j) => ({
+        contentText: a.contentText,
+        isCorrect: a.isCorrect,
+        orderIndex: j,
+      }));
+      await prisma.question.create({
+        data: {
+          quizId: quiz.quizId,
+          contentText: q.content,
+          type: 'single_choice',
+          orderIndex: i,
+          questionAnswers: { create: questionAnswers },
+        },
       });
     }
-    const statusCode = customError.statusCode || 500;
-    const errorMessage = customError.message || 'Failed to analyze knowledge gaps';
-    res.status(statusCode).json({ error: errorMessage });
+
+    const created = await prisma.quiz.findUnique({
+      where: { quizId: quiz.quizId },
+      include: {
+        questions: {
+          include: { questionAnswers: true },
+          orderBy: { orderIndex: 'asc' },
+        },
+      },
+    });
+    if (validQuestions.length > 0 && (!created.questions || created.questions.length === 0)) {
+      console.error('Apply generated quiz: created quiz has no questions despite validQuestions.length > 0', { quizId: created.quizId });
+      return res.status(500).json({ error: 'Failed to save questions; please try again.' });
+    }
+    if (created.questions.length !== validQuestions.length) {
+      console.error('Apply generated quiz: question count mismatch', {
+        quizId: created.quizId,
+        expected: validQuestions.length,
+        actual: created.questions.length,
+      });
+      return res.status(500).json({ error: 'Not all questions were saved; please try again.' });
+    }
+    res.status(201).json(created);
+  } catch (error) {
+    console.error('Apply generated quiz error:', error);
+    res.status(500).json({ error: 'Internal server error' });
   }
 };
 
 module.exports = {
   generateQuiz,
+  applyGeneratedQuiz,
   chatWithTutor,
   getHint,
   getKnowledgeGaps,

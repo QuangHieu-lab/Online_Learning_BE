@@ -1,11 +1,12 @@
 const jwt = require('jsonwebtoken');
+const { getJwtSecret } = require('../config/constants');
 
 /** Optional auth: set req.userId if token valid, otherwise undefined. Never blocks. */
 const optionalAuthenticate = (req, res, next) => {
   try {
     const token = req.cookies?.authToken || req.headers.authorization?.split(' ')[1];
     if (token) {
-      const decoded = jwt.verify(token, process.env.JWT_SECRET || 'secret');
+      const decoded = jwt.verify(token, getJwtSecret());
       req.userId = decoded.userId;
       req.userRoles = decoded.roles || [];
     } else {
@@ -28,7 +29,7 @@ const authenticate = (req, res, next) => {
       return res.status(401).json({ error: 'No token provided' });
     }
 
-    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'secret');
+    const decoded = jwt.verify(token, getJwtSecret());
 
     req.userId = decoded.userId;
     req.userRoles = decoded.roles || [];

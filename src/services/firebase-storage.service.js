@@ -1,3 +1,4 @@
+const fs = require('fs');
 const { getStorageBucket } = require('./firebase.service');
 const { Readable } = require('stream');
 
@@ -6,16 +7,28 @@ const getFileExtension = (filename) => {
   return ext ? `.${ext}` : '';
 };
 
+/** Create a readable stream from multer file (buffer from memoryStorage or path from diskStorage). */
+function createUploadStream(file) {
+  if (file.buffer && Buffer.isBuffer(file.buffer)) {
+    return Readable.from(file.buffer);
+  }
+  if (file.path && typeof file.path === 'string') {
+    return fs.createReadStream(file.path);
+  }
+  throw new Error('File has neither buffer nor path');
+}
+
 const uploadFileToFirebase = async (file, folder = 'videos', customFileName) => {
+  const inputStream = createUploadStream(file);
+  const usedPath = !!file.path;
+
   try {
     const bucket = getStorageBucket();
     const fileName =
       customFileName ||
-      `${Date.now()}-${Math.round(Math.random() * 1e9)}${getFileExtension(file.originalname)}`;
+      `${Date.now()}-${Math.round(Math.random() * 1e9)}${getFileExtension(file.originalname || '')}`;
     const filePath = `${folder}/${fileName}`;
     const fileRef = bucket.file(filePath);
-
-    const stream = Readable.from(file.buffer);
 
     await new Promise((resolve, reject) => {
       const writeStream = fileRef.createWriteStream({
@@ -28,14 +41,16 @@ const uploadFileToFirebase = async (file, folder = 'videos', customFileName) => 
         public: true,
       });
 
-      stream.pipe(writeStream);
+      inputStream.pipe(writeStream);
 
       writeStream.on('error', (error) => {
         console.error('Upload error:', error);
+        if (usedPath && typeof inputStream.destroy === 'function') inputStream.destroy();
         reject(error);
       });
 
       writeStream.on('finish', () => {
+        if (usedPath && typeof inputStream.destroy === 'function') inputStream.destroy();
         resolve();
       });
     });

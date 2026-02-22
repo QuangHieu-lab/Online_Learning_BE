@@ -1,6 +1,7 @@
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
+const { VIDEO_MAX_BYTES, RESOURCE_MAX_BYTES } = require('../config/constants');
 
 // Create uploads directory if it doesn't exist
 const uploadsDir = path.join(__dirname, '../../uploads');
@@ -34,8 +35,32 @@ const uploadVideo = multer({
   storage,
   fileFilter,
   limits: {
-    fileSize: 500 * 1024 * 1024, // 500MB
+    fileSize: VIDEO_MAX_BYTES,
   },
 });
 
-module.exports = { uploadVideo };
+// Resources (documents): PDF, DOC, etc. - store in uploads/resources
+const resourcesDir = path.join(__dirname, '../../uploads/resources');
+if (!fs.existsSync(resourcesDir)) {
+  fs.mkdirSync(resourcesDir, { recursive: true });
+}
+const resourceStorage = multer.diskStorage({
+  destination: (req, file, cb) => cb(null, resourcesDir),
+  filename: (req, file, cb) => {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
+    cb(null, uniqueSuffix + path.extname(file.originalname));
+  },
+});
+const resourceFileFilter = (req, file, cb) => {
+  const allowed = /^(pdf|doc|docx|xls|xlsx|ppt|pptx|txt|zip)$/;
+  const ext = path.extname(file.originalname || '').toLowerCase().slice(1);
+  if (allowed.test(ext)) return cb(null, true);
+  cb(new Error('Only documents (PDF, DOC, etc.) are allowed'));
+};
+const uploadResource = multer({
+  storage: resourceStorage,
+  fileFilter: resourceFileFilter,
+  limits: { fileSize: RESOURCE_MAX_BYTES },
+});
+
+module.exports = { uploadVideo, uploadResource };

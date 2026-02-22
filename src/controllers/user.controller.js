@@ -1,4 +1,5 @@
 const prisma = require('../utils/prisma');
+const { mapPrismaError } = require('../utils/error.utils');
 const bcrypt = require('bcrypt');
 
 const getAllUsers = async (req, res) => {
@@ -163,7 +164,8 @@ const updateUser = async (req, res) => {
     if (error.code === 'P2002') {
       return res.status(400).json({ error: 'Email already exists' });
     }
-    res.status(500).json({ error: 'Internal server error' });
+    const { status, message } = mapPrismaError(error);
+    return res.status(status).json({ error: message });
   }
 };
 
@@ -244,7 +246,8 @@ const createUser = async (req, res) => {
     if (error.code === 'P2002') {
       return res.status(400).json({ error: 'Email already exists' });
     }
-    res.status(500).json({ error: 'Internal server error' });
+    const { status, message } = mapPrismaError(error);
+    return res.status(status).json({ error: message });
   }
 };
 

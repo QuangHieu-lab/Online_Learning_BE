@@ -1,12 +1,27 @@
-const jwt = require('jsonwebtoken');
 const prisma = require('../utils/prisma');
+const { createVNPayPaymentUrl } = require('../services/vnpay.service');
 const {
-  createVNPayPaymentUrl,
-  verifyVNPayCallback,
+  verifyAndApplyVnpayCallback,
   getVNPayResponseMessage,
-} = require('../services/vnpay.service');
-const { getCookieOptions } = require('../utils/cookie.utils');
+} = require('../services/payment-callback.service');
+const { setAuthCookie, createAuthToken } = require('../utils/auth.utils');
 const crypto = require('crypto');
+
+/** Ensure frontend URL has port for localhost/127.0.0.1 to avoid redirect to port 80 (ERR_CONNECTION_REFUSED) */
+function getFrontendBaseUrl() {
+  const raw = process.env.FRONTEND_URL || 'http://127.0.0.1:5173';
+  try {
+    const u = new URL(raw);
+    const isLocal = u.hostname === 'localhost' || u.hostname === '127.0.0.1';
+    if (isLocal && !u.port) {
+      u.port = '5173';
+      return u.toString().replace(/\/$/, '');
+    }
+    return raw.replace(/\/$/, '');
+  } catch {
+    return raw.replace(/\/$/, '');
+  }
+}
 
 const createPayment = async (req, res) => {
   try {
@@ -14,8 +29,8 @@ const createPayment = async (req, res) => {
     const userId = req.userId;
     const courseIdInt = typeof courseId === 'string' ? parseInt(courseId) : courseId;
 
-    if (!courseId || isNaN(courseIdInt)) {
-      return res.status(400).json({ error: 'Course ID is required' });
+    if (!courseId || isNaN(courseIdInt) || courseIdInt < 1) {
+      return res.status(400).json({ error: 'Valid course ID (positive integer) is required' });
     }
 
     const course = await prisma.course.findUnique({
@@ -126,121 +141,15 @@ const createPayment = async (req, res) => {
 
 const vnpayReturn = async (req, res) => {
   try {
-    const queryParams = {};
-    for (const [key, value] of Object.entries(req.query)) {
-      if (typeof value === 'string') {
-        queryParams[key] = value;
-      } else if (Array.isArray(value) && value.length > 0 && typeof value[0] === 'string') {
-        queryParams[key] = value[0];
-      }
+    const { transaction, isSuccess, data, responseCode } = await verifyAndApplyVnpayCallback(req.query);
+
+    if (isSuccess && transaction.order.user) {
+      const roles = transaction.order.user.userRoles.map((ur) => ur.role.roleName);
+      const token = createAuthToken(transaction.order.user.userId, roles);
+      setAuthCookie(res, token);
     }
 
-    const verification = verifyVNPayCallback(queryParams);
-
-    if (!verification.isValid) {
-      return res.status(400).send('Invalid signature');
-    }
-
-    const { data } = verification;
-    if (!data) {
-      return res.status(400).send('Invalid callback data');
-    }
-
-    const transaction = await prisma.transaction.findUnique({
-      where: { vnpayTxnRef: data.vnp_TxnRef },
-      include: {
-        order: {
-          include: {
-            user: {
-              include: {
-                userRoles: {
-                  include: {
-                    role: true,
-                  },
-                },
-              },
-            },
-            orderDetails: {
-              include: {
-                course: true,
-              },
-            },
-          },
-        },
-      },
-    });
-
-    if (!transaction) {
-      return res.status(404).send('Transaction not found');
-    }
-
-    const responseCode = data.vnp_ResponseCode;
-    const isSuccess = responseCode === '00';
-
-    await prisma.transaction.update({
-      where: { transactionId: transaction.transactionId },
-      data: {
-        status: isSuccess ? 'success' : 'failed',
-        vnpayOrderId: data.vnp_TransactionNo,
-        vnpayResponseCode: responseCode,
-        vnpayMessage: getVNPayResponseMessage(responseCode),
-        paidAt: isSuccess ? new Date() : null,
-      },
-    });
-
-    await prisma.order.update({
-      where: { orderId: transaction.order.orderId },
-      data: {
-        status: isSuccess ? 'completed' : 'canceled',
-      },
-    });
-
-    if (isSuccess) {
-      const order = transaction.order;
-      const courseId = order.orderDetails[0]?.courseId;
-
-      if (courseId) {
-        const existingEnrollment = await prisma.enrollment.findUnique({
-          where: {
-            userId_courseId: {
-              userId: order.userId,
-              courseId,
-            },
-          },
-        });
-
-        if (!existingEnrollment) {
-          await prisma.enrollment.create({
-            data: {
-              userId: order.userId,
-              courseId,
-              orderId: order.orderId,
-            },
-          });
-        } else {
-          await prisma.enrollment.update({
-            where: { enrollmentId: existingEnrollment.enrollmentId },
-            data: { orderId: order.orderId },
-          });
-        }
-      }
-
-      if (order.user) {
-        const roles = order.user.userRoles.map((ur) => ur.role.roleName);
-        const token = jwt.sign(
-          { userId: order.user.userId, roles },
-          process.env.JWT_SECRET || 'secret',
-          { expiresIn: '7d' }
-        );
-        const cookieOptions = getCookieOptions();
-        if (process.env.NODE_ENV !== 'production') {
-          delete cookieOptions.domain;
-        }
-        res.cookie('authToken', token, cookieOptions);
-      }
-    }
-
-    const frontendUrl = process.env.FRONTEND_URL || 'http://127.0.0.1:5173';
+    const frontendUrl = getFrontendBaseUrl();
     const courseId = transaction.order.orderDetails[0]?.courseId;
     const redirectUrl = isSuccess
       ? `${frontendUrl}/payments/callback?payment=success&courseId=${courseId}&txnRef=${data.vnp_TxnRef}`
@@ -249,8 +158,60 @@ const vnpayReturn = async (req, res) => {
     res.redirect(redirectUrl);
   } catch (error) {
     console.error('VNPay return error:', error);
-    const frontendUrl = process.env.FRONTEND_URL || 'http://127.0.0.1:5173';
+    if (error.status === 400) {
+      return res.status(400).json({ error: error.message });
+    }
+    if (error.status === 404) {
+      return res.status(404).json({ error: error.message });
+    }
+    const frontendUrl = getFrontendBaseUrl();
     res.redirect(`${frontendUrl}/payments/callback?payment=error`);
+  }
+};
+
+const getPaymentHistory = async (req, res) => {
+  try {
+    const userId = req.userId;
+
+    const orders = await prisma.order.findMany({
+      where: { userId },
+      orderBy: { createdAt: 'desc' },
+      include: {
+        transaction: true,
+        orderDetails: {
+          include: {
+            course: {
+              select: {
+                courseId: true,
+                title: true,
+                price: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    const history = orders.map((order) => ({
+      orderId: order.orderId,
+      status: order.status,
+      totalAmount: order.totalAmount,
+      createdAt: order.createdAt,
+      transactionId: order.transaction?.transactionId ?? null,
+      paidAt: order.transaction?.paidAt ?? null,
+      transactionStatus: order.transaction?.status ?? null,
+      vnpayMessage: order.transaction?.vnpayMessage ?? null,
+      courses: order.orderDetails.map((od) => ({
+        courseId: od.course.courseId,
+        title: od.course.title,
+        price: od.course.price,
+      })),
+    }));
+
+    res.json(history);
+  } catch (error) {
+    console.error('Get payment history error:', error);
+    res.status(500).json({ error: 'Internal server error' });
   }
 };
 
@@ -310,5 +271,6 @@ const getPaymentStatus = async (req, res) => {
 module.exports = {
   createPayment,
   vnpayReturn,
+  getPaymentHistory,
   getPaymentStatus,
 };

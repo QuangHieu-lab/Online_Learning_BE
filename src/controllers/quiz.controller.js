@@ -1,41 +1,26 @@
 const prisma = require('../utils/prisma');
+const { getLessonForInstructor, ensureQuizLessonAccess, ensureQuizAccess, getQuizForInstructor, sendAccessError } = require('../utils/access.helpers');
+const { DEFAULT_PASSING_SCORE, DEFAULT_TIME_LIMIT_MINUTES } = require('../config/constants');
+const { scoreQuizSubmission, buildQuestionResultsFromAttempt } = require('../utils/quiz.utils');
 
 const createQuiz = async (req, res) => {
   try {
     const { lessonId } = req.params;
     const { title, timeLimitMinutes, passingScore } = req.body;
     const userId = req.userId;
-    const lessonIdInt = parseInt(lessonId);
 
-    if (isNaN(lessonIdInt)) {
-      return res.status(400).json({ error: 'Invalid lesson ID' });
+    const access = await getLessonForInstructor(lessonId, userId);
+    if (access.error) {
+      return sendAccessError(res, access.error);
     }
-
-    const lesson = await prisma.lesson.findUnique({
-      where: { lessonId: lessonIdInt },
-      include: {
-        module: {
-          include: {
-            course: true,
-          },
-        },
-      },
-    });
-
-    if (!lesson) {
-      return res.status(404).json({ error: 'Lesson not found' });
-    }
-
-    if (lesson.module.course.instructorId !== userId) {
-      return res.status(403).json({ error: 'Not authorized' });
-    }
+    const lessonIdInt = access.lesson.lessonId;
 
     const quiz = await prisma.quiz.create({
       data: {
         lessonId: lessonIdInt,
-        title,
-        timeLimitMinutes: timeLimitMinutes ? parseInt(timeLimitMinutes) : 0,
-        passingScore: passingScore ? parseInt(passingScore) : 60,
+        title: title || 'Quiz',
+        timeLimitMinutes: timeLimitMinutes != null ? parseInt(timeLimitMinutes, 10) : DEFAULT_TIME_LIMIT_MINUTES,
+        passingScore: passingScore != null ? parseInt(passingScore, 10) : DEFAULT_PASSING_SCORE,
       },
       include: {
         questions: {
@@ -56,11 +41,13 @@ const createQuiz = async (req, res) => {
 const getQuizzes = async (req, res) => {
   try {
     const { lessonId } = req.params;
-    const lessonIdInt = parseInt(lessonId);
+    const userId = req.userId;
 
-    if (isNaN(lessonIdInt)) {
-      return res.status(400).json({ error: 'Invalid lesson ID' });
+    const access = await ensureQuizLessonAccess(lessonId, userId);
+    if (access.error) {
+      return sendAccessError(res, access.error);
     }
+    const lessonIdInt = access.lesson.lessonId;
 
     const quizzes = await prisma.quiz.findMany({
       where: { lessonId: lessonIdInt },
@@ -84,12 +71,15 @@ const getQuizzes = async (req, res) => {
 const getQuizById = async (req, res) => {
   try {
     const { quizId } = req.params;
-    const quizIdInt = parseInt(quizId);
     const userId = req.userId;
 
-    if (isNaN(quizIdInt)) {
-      return res.status(400).json({ error: 'Invalid quiz ID' });
+    const access = await ensureQuizAccess(quizId, userId);
+    if (access.error) {
+      return sendAccessError(res, access.error);
     }
+    const quizIdInt = access.quiz.quizId;
+    const courseId = access.quiz.lesson.module.course.courseId;
+    const userIdNum = typeof userId === 'string' ? parseInt(userId, 10) : userId;
 
     const quiz = await prisma.quiz.findUnique({
       where: { quizId: quizIdInt },
@@ -114,15 +104,11 @@ const getQuizById = async (req, res) => {
       },
     });
 
-    if (!quiz) {
-      return res.status(404).json({ error: 'Quiz not found' });
-    }
-
-    const enrollment = await prisma.enrollment.findUnique({
+    let enrollment = await prisma.enrollment.findUnique({
       where: {
         userId_courseId: {
-          userId,
-          courseId: quiz.lesson.module.course.courseId,
+          userId: userIdNum,
+          courseId,
         },
       },
     });
@@ -147,43 +133,19 @@ const getQuizById = async (req, res) => {
         include: {
           quizAttemptAnswers: {
             include: {
-              question: {
-                include: {
-                  questionAnswers: true,
-                },
-              },
+              question: { include: { questionAnswers: true } },
               selectedAnswer: true,
             },
           },
         },
       });
-
-      if (attemptWithAnswers) {
-        for (const question of quiz.questions) {
-          const attemptAnswer = attemptWithAnswers.quizAttemptAnswers.find(
-            (a) => a.questionId === question.questionId
-          );
-          const correctAnswer = question.questionAnswers.find((a) => a.isCorrect);
-          const userAnswer = attemptAnswer?.selectedAnswer;
-
-          questionResults.push({
-            questionId: question.questionId,
-            questionContent: question.contentText,
-            isCorrect: attemptAnswer?.isCorrect || false,
-            correctAnswerId: correctAnswer?.answerId || null,
-            correctAnswerContent: correctAnswer?.contentText || null,
-            userAnswerId: attemptAnswer?.selectedAnswerId || null,
-            userAnswerContent: userAnswer?.contentText || attemptAnswer?.textResponse || null,
-          });
-        }
-      }
+      questionResults = buildQuestionResultsFromAttempt(quiz, attemptWithAnswers);
     }
 
     res.json({
       quiz,
       attempt: existingAttempt,
-      questionResults: existingAttempt ? questionResults : [],
-      canRetake: true,
+      questionResults,
     });
   } catch (error) {
     console.error('Get quiz error:', error);
@@ -194,36 +156,14 @@ const getQuizById = async (req, res) => {
 const updateQuiz = async (req, res) => {
   try {
     const { quizId } = req.params;
-    const quizIdInt = parseInt(quizId);
     const { title, timeLimitMinutes, passingScore } = req.body;
     const userId = req.userId;
 
-    if (isNaN(quizIdInt)) {
-      return res.status(400).json({ error: 'Invalid quiz ID' });
+    const access = await getQuizForInstructor(quizId, userId);
+    if (access.error) {
+      return sendAccessError(res, access.error);
     }
-
-    const quiz = await prisma.quiz.findUnique({
-      where: { quizId: quizIdInt },
-      include: {
-        lesson: {
-          include: {
-            module: {
-              include: {
-                course: true,
-              },
-            },
-          },
-        },
-      },
-    });
-
-    if (!quiz) {
-      return res.status(404).json({ error: 'Quiz not found' });
-    }
-
-    if (quiz.lesson.module.course.instructorId !== userId) {
-      return res.status(403).json({ error: 'Not authorized' });
-    }
+    const quizIdInt = access.quiz.quizId;
 
     const updatedQuiz = await prisma.quiz.update({
       where: { quizId: quizIdInt },
@@ -244,38 +184,15 @@ const updateQuiz = async (req, res) => {
 const deleteQuiz = async (req, res) => {
   try {
     const { quizId } = req.params;
-    const quizIdInt = parseInt(quizId);
     const userId = req.userId;
 
-    if (isNaN(quizIdInt)) {
-      return res.status(400).json({ error: 'Invalid quiz ID' });
-    }
-
-    const quiz = await prisma.quiz.findUnique({
-      where: { quizId: quizIdInt },
-      include: {
-        lesson: {
-          include: {
-            module: {
-              include: {
-                course: true,
-              },
-            },
-          },
-        },
-      },
-    });
-
-    if (!quiz) {
-      return res.status(404).json({ error: 'Quiz not found' });
-    }
-
-    if (quiz.lesson.module.course.instructorId !== userId) {
-      return res.status(403).json({ error: 'Not authorized' });
+    const access = await getQuizForInstructor(quizId, userId);
+    if (access.error) {
+      return sendAccessError(res, access.error);
     }
 
     await prisma.quiz.delete({
-      where: { quizId: quizIdInt },
+      where: { quizId: access.quiz.quizId },
     });
 
     res.json({ message: 'Quiz deleted successfully' });
@@ -288,16 +205,19 @@ const deleteQuiz = async (req, res) => {
 const submitQuiz = async (req, res) => {
   try {
     const { quizId } = req.params;
-    const quizIdInt = parseInt(quizId);
     const { answers } = req.body;
     const userId = req.userId;
 
-    if (isNaN(quizIdInt)) {
-      return res.status(400).json({ error: 'Invalid quiz ID' });
+    const access = await ensureQuizAccess(quizId, userId);
+    if (access.error) {
+      return sendAccessError(res, access.error);
     }
+    const quizFromAccess = access.quiz;
+    const courseId = quizFromAccess.lesson.module.course.courseId;
+    const userIdNum = typeof userId === 'string' ? parseInt(userId, 10) : userId;
 
     const quiz = await prisma.quiz.findUnique({
-      where: { quizId: quizIdInt },
+      where: { quizId: quizFromAccess.quizId },
       include: {
         lesson: {
           include: {
@@ -316,15 +236,11 @@ const submitQuiz = async (req, res) => {
       },
     });
 
-    if (!quiz) {
-      return res.status(404).json({ error: 'Quiz not found' });
-    }
-
     const enrollment = await prisma.enrollment.findUnique({
       where: {
         userId_courseId: {
-          userId,
-          courseId: quiz.lesson.module.course.courseId,
+          userId: userIdNum,
+          courseId,
         },
       },
     });
@@ -333,79 +249,11 @@ const submitQuiz = async (req, res) => {
       return res.status(403).json({ error: 'You must be enrolled in this course to take the quiz' });
     }
 
-    let correctCount = 0;
-    const totalQuestions = quiz.questions.length;
-    const questionResults = [];
-    const quizAttemptAnswers = [];
-
-    for (const question of quiz.questions) {
-      const userAnswer = answers.find((a) => a.questionId === question.questionId);
-      let isCorrect = false;
-      let correctAnswerId = null;
-      let correctAnswerContent = null;
-      let userAnswerContent = null;
-
-      if (question.type === 'single_choice' || question.type === 'multiple_choice') {
-        const correctAnswer = question.questionAnswers.find((a) => a.isCorrect);
-        correctAnswerId = correctAnswer?.answerId || null;
-        correctAnswerContent = correctAnswer?.contentText || null;
-
-        if (userAnswer) {
-          const selectedAnswer = question.questionAnswers.find(
-            (a) => a.answerId === userAnswer.answerId
-          );
-          userAnswerContent = selectedAnswer?.contentText || null;
-          if (userAnswer.answerId === correctAnswer?.answerId) {
-            isCorrect = true;
-            correctCount++;
-          }
-        }
-      } else if (question.type === 'fill_in_blank') {
-        isCorrect = true;
-        correctCount++;
-        if (userAnswer) {
-          userAnswerContent = userAnswer.content || null;
-        }
-      } else if (question.type === 'true_false') {
-        const correctAnswer = question.questionAnswers.find((a) => a.isCorrect);
-        correctAnswerId = correctAnswer?.answerId || null;
-        correctAnswerContent = correctAnswer?.contentText || null;
-
-        if (userAnswer) {
-          const selectedAnswer = question.questionAnswers.find(
-            (a) => a.answerId === userAnswer.answerId
-          );
-          userAnswerContent = selectedAnswer?.contentText || null;
-          if (userAnswer.answerId === correctAnswer?.answerId) {
-            isCorrect = true;
-            correctCount++;
-          }
-        }
-      }
-
-      questionResults.push({
-        questionId: question.questionId,
-        questionContent: question.contentText,
-        isCorrect,
-        correctAnswerId,
-        correctAnswerContent,
-        userAnswerId: userAnswer?.answerId || null,
-        userAnswerContent,
-      });
-
-      quizAttemptAnswers.push({
-        questionId: question.questionId,
-        selectedAnswerId: userAnswer?.answerId || null,
-        textResponse: userAnswer?.content || null,
-        isCorrect,
-      });
-    }
-
-    const score = Math.round((correctCount / totalQuestions) * 100);
+    const { correctCount, totalQuestions, questionResults, quizAttemptAnswers, score } = scoreQuizSubmission(quiz, answers || []);
 
     const attempt = await prisma.quizAttempt.create({
       data: {
-        quizId: quizIdInt,
+        quizId: quiz.quizId,
         enrollmentId: enrollment.enrollmentId,
         totalScore: score,
         completedAt: new Date(),

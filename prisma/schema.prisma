@@ -226,6 +226,7 @@ model Course {
   avgRating          Decimal        @default(0.00) @map("avg_rating") @db.Decimal(3, 2)
   createdAt          DateTime       @default(now()) @map("created_at")
   updatedAt          DateTime       @updatedAt @map("updated_at")
+  
 
   // Relations
   instructor    User           @relation("CourseInstructor", fields: [instructorId], references: [userId])

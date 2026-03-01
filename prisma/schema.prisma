@@ -663,3 +663,58 @@ model AnalyticsDailyStat {
 
   @@map("analytics_daily_stats")
 }
+
+// =====================================================================================
+// GROUP 8: INSTRUCTOR EARNINGS & SETTLEMENT (Phase 2 - Additive Only)
+// =====================================================================================
+
+/// Records individual instructor earnings per order detail (per course sale)
+/// Created when a transaction is successfully completed
+/// Uses string status to avoid enum modification
+model InstructorEarning {
+  earningId         Int       @id @default(autoincrement()) @map("earning_id")
+  instructorId      Int       @map("instructor_id")
+  orderDetailId     Int       @unique @map("order_detail_id") // Prevents duplicate earnings
+  transactionId     Int       @map("transaction_id")
+  settlementBatchId Int?      @map("settlement_batch_id") // Null until included in settlement
+  grossAmount       Decimal   @map("gross_amount") @db.Decimal(15, 2)
+  platformFeeAmount Decimal   @map("platform_fee_amount") @db.Decimal(15, 2)
+  netAmount         Decimal   @map("net_amount") @db.Decimal(15, 2)
+  month             String    @db.VarChar(7) // Format: YYYY-MM (transaction month)
+  status            String    @default("unsettled") @db.VarChar(20) // unsettled, batched, settled
+  createdAt         DateTime  @default(now()) @map("created_at")
+
+  // Relations (reference only, no FK constraints to avoid coupling)
+  settlementBatch InstructorSettlementBatch? @relation(fields: [settlementBatchId], references: [batchId])
+
+  @@index([instructorId])
+  @@index([transactionId])
+  @@index([settlementBatchId])
+  @@index([createdAt])
+  @@index([month])
+  @@index([status])
+  @@map("instructor_earnings")
+}
+
+/// Monthly settlement batch per instructor
+/// Groups all earnings for a specific month
+/// Uses string status to avoid enum modification
+model InstructorSettlementBatch {
+  batchId          Int       @id @default(autoincrement()) @map("batch_id")
+  instructorId     Int       @map("instructor_id")
+  month            String    @db.VarChar(7) // Format: YYYY-MM
+  totalGross       Decimal   @map("total_gross") @db.Decimal(15, 2)
+  totalPlatformFee Decimal   @map("total_platform_fee") @db.Decimal(15, 2)
+  totalNet         Decimal   @map("total_net") @db.Decimal(15, 2)
+  status           String    @default("generated") @db.VarChar(20) // generated, paid, canceled
+  paidAt           DateTime? @map("paid_at")
+  createdAt        DateTime  @default(now()) @map("created_at")
+
+  // Relations
+  earnings InstructorEarning[]
+
+  @@unique([instructorId, month]) // Prevents duplicate settlement for same instructor+month
+  @@index([status])
+  @@index([month])
+  @@map("instructor_settlement_batches")
+}

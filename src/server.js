@@ -26,6 +26,7 @@ const userRoutes = require('./routes/user.routes');
 const paymentRoutes = require('./routes/payment.routes');
 const cartRoutes = require('./routes/cart.routes')
 const certificateRoutes = require('./routes/certificate.routes');
+const adminRoutes = require('./routes/admin');
 const app = express();
 const httpServer = createServer(app);
 
@@ -108,6 +109,7 @@ app.use('/api/users', userRoutes);
 app.use('/api/payments', paymentRoutes);
 app.use('/api/cart', cartRoutes);
 app.use('/api/certificates', certificateRoutes);
+app.use('/api/admin', adminRoutes);
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', message: 'Server is running' });
 });

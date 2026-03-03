@@ -1,5 +1,8 @@
 const prisma = require('./prisma');
-const { ENROLLMENT_STATUS_ACTIVE } = require('../config/constants');
+const {
+  ENROLLMENT_STATUS_ACTIVE,
+  ENROLLMENT_STATUS_COMPLETED,
+} = require('../config/constants');
 
 function parseId(value, name) {
   const n = typeof value === 'string' ? parseInt(value, 10) : value;
@@ -257,7 +260,11 @@ async function ensureQuizAccess(quizId, userId) {
   const enrollment = await prisma.enrollment.findUnique({
     where: { userId_courseId: { userId: userIdNum, courseId } },
   });
-  if (!enrollment || enrollment.status !== ENROLLMENT_STATUS_ACTIVE) {
+  if (
+    !enrollment ||
+    (enrollment.status !== ENROLLMENT_STATUS_ACTIVE &&
+      enrollment.status !== ENROLLMENT_STATUS_COMPLETED)
+  ) {
     return { error: { status: 403, message: 'Not authorized to access this quiz' } };
   }
   return { quiz };

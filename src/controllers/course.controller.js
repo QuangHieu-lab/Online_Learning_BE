@@ -210,12 +210,12 @@ const getCourseById = async (req, res) => {
         },
       },
     });
-
+const isAdmin = currentUser?.role === 'admin' || currentUser?.roles?.includes('admin');
     const isEnrolled = !!enrollment;
     const isInstructor = course.instructorId === userId;
     const isPaidCourse = Number(course.price) > 0;
 
-    if (isPaidCourse && !isEnrolled && !isInstructor) {
+    if (isPaidCourse && !isEnrolled && !isInstructor && !isAdmin) {
       const courseWithoutContent = {
         ...course,
         modules: course.modules.map((module) => ({
@@ -229,7 +229,7 @@ const getCourseById = async (req, res) => {
 
     res.json({
       ...course,
-      isEnrolled: isEnrolled || isInstructor,
+      isEnrolled: isEnrolled || isInstructor || isAdmin,
     });
   } catch (error) {
     console.error('Get course error:', error);

@@ -128,9 +128,9 @@ const updateUser = async (req, res) => {
     if (password) {
       updateData.passwordHash = await bcrypt.hash(password, 10);
     }
-    if (typeof isActive === 'boolean') updatedData.isActive = isActive;
-  if (phoneNumber !== undefined) updatedData.phoneNumber = phoneNumber || null;
-  if (currentLevel) updatedData.currentLevel = currentLevel;  
+    if (typeof isActive === 'boolean') updateData.isActive = isActive;
+  if (phoneNumber !== undefined) updateData.phoneNumber = phoneNumber || null;
+  if (currentLevel) updateData.currentLevel = currentLevel;  
     if (roles && Array.isArray(roles)) {
       await prisma.userRole.deleteMany({
         where: { userId: userIdInt },

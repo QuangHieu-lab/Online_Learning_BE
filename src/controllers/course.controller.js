@@ -607,7 +607,7 @@ const approveCourse = async (req, res) => {
     const updatedCourse = await prisma.course.update({
       where: { courseId: courseIdInt },
       data: {
-        status: 'approved_upload',
+        status: 'published',
         adminNote: null,
       },
       include: {

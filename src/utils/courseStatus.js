@@ -8,7 +8,7 @@
  */
 const VALID_TRANSITIONS = {
   draft: ['pending_review'],
-  pending_review: ['approved_upload', 'rejected'],
+  pending_review: ['published', 'rejected'],
   approved_upload: ['published'],
   rejected: ['draft'],
   published: [], // Published courses cannot transition (final state)

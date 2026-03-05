@@ -598,7 +598,7 @@ const approveCourse = async (req, res) => {
     const courseIdInt = course.courseId;
 
     // Validate status transition
-    if (!isValidStatusTransition(course.status, 'approved_upload')) {
+    if (!isValidStatusTransition(course.status, 'published')) {
       return res.status(400).json({ 
         error: `Cannot approve course. Current status: ${course.status}. Only pending_review courses can be approved.` 
       });

@@ -104,6 +104,13 @@ const getAllOrders = async (req, res) => {
                   courseId: true,
                   title: true,
                   price: true,
+                  instructor: {
+                    select: {
+                      userId: true,
+                      fullName: true,
+                      email: true,
+                    }
+                  }
                 },
               },
             },
@@ -131,6 +138,7 @@ const getAllOrders = async (req, res) => {
         courseId: d.course.courseId,
         title: d.course.title,
         price: d.price,
+        instructor: d.course.instructor,
       })),
       transaction: order.transaction,
       createdAt: order.createdAt,

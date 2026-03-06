@@ -44,7 +44,7 @@ const getLessons = async (req, res) => {
     const { moduleId } = req.params;
     const userId = req.userId;
 
-    const access = await ensureModuleAccess(moduleId, userId);
+    const access = await ensureModuleAccess(moduleId, userId, { roles: req.userRoles || [] });
     if (access.error) {
       return sendAccessError(res, access.error);
     }
@@ -76,7 +76,7 @@ const getLessonById = async (req, res) => {
     const { lessonId } = req.params;
     const userId = req.userId;
 
-    const access = await ensureLessonAccess(lessonId, userId);
+    const access = await ensureLessonAccess(lessonId, userId, { roles: req.userRoles || [] });
     if (access.error) {
       return sendAccessError(res, access.error);
     }

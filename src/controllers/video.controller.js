@@ -101,8 +101,8 @@ const status = isFirebaseUnavailable ? 503 : 500;
   }
 };
 
-/** If existingLessonResource is provided (with lesson.module.course), skips loading it again. */
-async function checkVideoAccess(prisma, userId, resourceIdInt, existingLessonResource = null) {
+/** If existingLessonResource is provided (with lesson.module.course), skips loading it again. roles: if includes 'admin', access is allowed. */
+async function checkVideoAccess(prisma, userId, resourceIdInt, existingLessonResource = null, roles = []) {
   const lessonResource =
     existingLessonResource ||
     (await prisma.lessonResource.findUnique({
@@ -118,6 +118,7 @@ async function checkVideoAccess(prisma, userId, resourceIdInt, existingLessonRes
       },
     }));
   if (!lessonResource || lessonResource.fileType !== 'video') return { allowed: false, notFound: true };
+  if (Array.isArray(roles) && roles.includes('admin')) return { allowed: true };
   const courseId = lessonResource.lesson.module.course.courseId;
   const instructorId = lessonResource.lesson.module.course.instructorId;
   const userIdNum = typeof userId === 'string' ? parseInt(userId, 10) : userId;
@@ -157,7 +158,7 @@ const getVideo = async (req, res) => {
       return res.status(404).json({ error: 'Video not found' });
     }
 
-    const access = await checkVideoAccess(prisma, userId, resourceIdInt, lessonResource);
+    const access = await checkVideoAccess(prisma, userId, resourceIdInt, lessonResource, req.userRoles || []);
     if (access.notFound) return res.status(404).json({ error: 'Video not found' });
     if (!access.allowed) return res.status(403).json({ error: 'Not authorized to access this video' });
 
@@ -185,7 +186,7 @@ const resourceIdInt = parseInt(videoId);
       return res.status(400).json({ error: 'Invalid video ID' });
     }
 
-    const access = await checkVideoAccess(prisma, userId, resourceIdInt);
+    const access = await checkVideoAccess(prisma, userId, resourceIdInt, null, req.userRoles || []);
     if (access.notFound) return res.status(404).json({ error: 'Video not found' });
     if (!access.allowed) return res.status(403).json({ error: 'Not authorized to access this video' });
 
@@ -210,7 +211,7 @@ const downloadVideo = async (req, res) => {
       return res.status(400).json({ error: 'Invalid video ID' });
     }
 
-    const access = await checkVideoAccess(prisma, userId, resourceIdInt);
+    const access = await checkVideoAccess(prisma, userId, resourceIdInt, null, req.userRoles || []);
     if (access.notFound) return res.status(404).json({ error: 'Video not found' });
     if (!access.allowed) return res.status(403).json({ error: 'Not authorized to access this video' });
 

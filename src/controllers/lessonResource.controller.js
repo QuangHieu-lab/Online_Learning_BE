@@ -2,8 +2,8 @@ const prisma = require('../utils/prisma');
 const path = require('path');
 const { ENROLLMENT_STATUS_ACTIVE } = require('../config/constants');
 
-/** Check if user can access lesson: instructor of course or enrolled student with active enrollment. */
-async function canAccessLesson(prismaClient, lessonId, userId) {
+/** Check if user can access lesson: admin, instructor of course, or enrolled student with active enrollment. */
+async function canAccessLesson(prismaClient, lessonId, userId, roles = []) {
   const lessonIdNum = typeof lessonId === 'number' ? lessonId : parseInt(lessonId, 10);
   if (Number.isNaN(lessonIdNum)) return { allowed: false, lesson: null };
   const lesson = await prismaClient.lesson.findUnique({
@@ -11,6 +11,9 @@ async function canAccessLesson(prismaClient, lessonId, userId) {
     include: { module: { include: { course: true } } },
   });
   if (!lesson) return { allowed: false, lesson: null };
+  if (Array.isArray(roles) && roles.includes('admin')) {
+    return { allowed: true, lesson };
+  }
   const courseId = lesson.module.courseId;
   const userIdNum = typeof userId === 'string' ? parseInt(userId, 10) : userId;
   const isInstructor = lesson.module.course.instructorId === userIdNum;
@@ -31,7 +34,7 @@ const listByLesson = async (req, res) => {
     if (isNaN(lessonIdInt)) {
       return res.status(400).json({ error: 'Invalid lesson ID' });
     }
-    const { allowed, lesson } = await canAccessLesson(prisma, lessonId, userId);
+    const { allowed, lesson } = await canAccessLesson(prisma, lessonId, userId, req.userRoles || []);
     if (!allowed || !lesson) {
       return res.status(404).json({ error: 'Lesson not found or access denied' });
     }

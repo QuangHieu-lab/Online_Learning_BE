@@ -13,11 +13,12 @@ function parseId(value, name) {
 }
 
 /**
- * Load lesson by ID and check access: user is instructor or has active enrollment.
+ * Load lesson by ID and check access: user is instructor, admin, or has active enrollment.
  * lessonId: number or string.
+ * options.roles: optional array (e.g. req.userRoles); if includes 'admin', access is allowed.
  * Returns { lesson } or { error: { status, message } }.
  */
-async function ensureLessonAccess(lessonId, userId) {
+async function ensureLessonAccess(lessonId, userId, options = {}) {
   const parsed = parseId(lessonId, 'lesson ID');
   if (parsed.error) return parsed;
 
@@ -34,6 +35,11 @@ async function ensureLessonAccess(lessonId, userId) {
 
   if (!lesson) {
     return { error: { status: 404, message: 'Lesson not found' } };
+  }
+
+  const roles = options.roles || [];
+  if (Array.isArray(roles) && roles.includes('admin')) {
+    return { lesson };
   }
 
   const courseId = lesson.module.course.courseId;
@@ -57,8 +63,8 @@ async function ensureLessonAccess(lessonId, userId) {
  * Same as ensureLessonAccess but for use when you already have lessonId (e.g. quiz by lesson).
  * Alias for consistency in quiz controller.
  */
-async function ensureQuizLessonAccess(lessonId, userId) {
-  return ensureLessonAccess(lessonId, userId);
+async function ensureQuizLessonAccess(lessonId, userId, options = {}) {
+  return ensureLessonAccess(lessonId, userId, options);
 }
 
 /**
@@ -92,8 +98,9 @@ async function getLessonForInstructor(lessonId, userId) {
 
 /**
  * Get lesson with full course (for controllers that need course object).
+ * options.roles: if includes 'admin', access is allowed.
  */
-async function ensureLessonAccessWithCourse(lessonId, userId) {
+async function ensureLessonAccessWithCourse(lessonId, userId, options = {}) {
   const parsed = parseId(lessonId, 'lesson ID');
   if (parsed.error) return parsed;
 
@@ -110,6 +117,11 @@ async function ensureLessonAccessWithCourse(lessonId, userId) {
 
   if (!lesson) {
     return { error: { status: 404, message: 'Lesson not found' } };
+  }
+
+  const roles = options.roles || [];
+  if (Array.isArray(roles) && roles.includes('admin')) {
+    return { lesson };
   }
 
   const courseId = lesson.module.course.courseId;
@@ -130,10 +142,11 @@ async function ensureLessonAccessWithCourse(lessonId, userId) {
 }
 
 /**
- * Load module by ID and check access (instructor or active enrollment).
+ * Load module by ID and check access (instructor, admin, or active enrollment).
+ * options.roles: if includes 'admin', access is allowed.
  * Returns { module } or { error: { status, message } }.
  */
-async function ensureModuleAccess(moduleId, userId) {
+async function ensureModuleAccess(moduleId, userId, options = {}) {
   const parsed = parseId(moduleId, 'module ID');
   if (parsed.error) return parsed;
 
@@ -144,6 +157,11 @@ async function ensureModuleAccess(moduleId, userId) {
 
   if (!module) {
     return { error: { status: 404, message: 'Module not found' } };
+  }
+
+  const roles = options.roles || [];
+  if (Array.isArray(roles) && roles.includes('admin')) {
+    return { module };
   }
 
   const courseId = module.course.courseId;
@@ -223,10 +241,11 @@ async function getCourseForInstructor(courseId, userId, options = {}) {
 }
 
 /**
- * Ensure user owns the quiz (via lesson → module → course → instructorId).
- * Pass quizId to load quiz and check; returns { quiz } or { error }.
+ * Ensure user can access the quiz (instructor, admin, or enrolled).
+ * options.roles: if includes 'admin', access is allowed.
+ * Returns { quiz } or { error }.
  */
-async function ensureQuizAccess(quizId, userId) {
+async function ensureQuizAccess(quizId, userId, options = {}) {
   const parsed = parseId(quizId, 'quiz ID');
   if (parsed.error) return parsed;
 
@@ -247,6 +266,11 @@ async function ensureQuizAccess(quizId, userId) {
 
   if (!quiz) {
     return { error: { status: 404, message: 'Quiz not found' } };
+  }
+
+  const roles = options.roles || [];
+  if (Array.isArray(roles) && roles.includes('admin')) {
+    return { quiz };
   }
 
   const courseId = quiz.lesson.module.course.courseId;

@@ -43,7 +43,7 @@ const getQuizzes = async (req, res) => {
     const { lessonId } = req.params;
     const userId = req.userId;
 
-    const access = await ensureQuizLessonAccess(lessonId, userId);
+    const access = await ensureQuizLessonAccess(lessonId, userId, { roles: req.userRoles || [] });
     if (access.error) {
       return sendAccessError(res, access.error);
     }
@@ -73,7 +73,7 @@ const getQuizById = async (req, res) => {
     const { quizId } = req.params;
     const userId = req.userId;
 
-    const access = await ensureQuizAccess(quizId, userId);
+    const access = await ensureQuizAccess(quizId, userId, { roles: req.userRoles || [] });
     if (access.error) {
       return sendAccessError(res, access.error);
     }

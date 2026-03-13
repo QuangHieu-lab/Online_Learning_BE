@@ -53,7 +53,11 @@ async function ensureLessonAccess(lessonId, userId, options = {}) {
   const enrollment = await prisma.enrollment.findUnique({
     where: { userId_courseId: { userId: userIdNum, courseId } },
   });
-  if (!enrollment || enrollment.status !== ENROLLMENT_STATUS_ACTIVE) {
+  if (
+    !enrollment ||
+    (enrollment.status !== ENROLLMENT_STATUS_ACTIVE &&
+      enrollment.status !== ENROLLMENT_STATUS_COMPLETED)
+  ) {
     return { error: { status: 403, message: 'Not authorized to access this course content' } };
   }
   return { lesson };
@@ -135,7 +139,11 @@ async function ensureLessonAccessWithCourse(lessonId, userId, options = {}) {
   const enrollment = await prisma.enrollment.findUnique({
     where: { userId_courseId: { userId: userIdNum, courseId } },
   });
-  if (!enrollment || enrollment.status !== ENROLLMENT_STATUS_ACTIVE) {
+  if (
+    !enrollment ||
+    (enrollment.status !== ENROLLMENT_STATUS_ACTIVE &&
+      enrollment.status !== ENROLLMENT_STATUS_COMPLETED)
+  ) {
     return { error: { status: 403, message: 'Not authorized to access this course content' } };
   }
   return { lesson };
@@ -175,7 +183,11 @@ async function ensureModuleAccess(moduleId, userId, options = {}) {
   const enrollment = await prisma.enrollment.findUnique({
     where: { userId_courseId: { userId: userIdNum, courseId } },
   });
-  if (!enrollment || enrollment.status !== ENROLLMENT_STATUS_ACTIVE) {
+  if (
+    !enrollment ||
+    (enrollment.status !== ENROLLMENT_STATUS_ACTIVE &&
+      enrollment.status !== ENROLLMENT_STATUS_COMPLETED)
+  ) {
     return { error: { status: 403, message: 'Not authorized to access this course content' } };
   }
   return { module };

@@ -5,7 +5,7 @@ const {
   uploadFileToFirebase,
   deleteFileFromFirebase,
 } = require('../services/firebase-storage.service');
-const { ENROLLMENT_STATUS_ACTIVE } = require('../config/constants');
+const { ENROLLMENT_STATUS_ACTIVE, ENROLLMENT_STATUS_COMPLETED } = require('../config/constants');
 
 // Video controller uses LessonResource model (resourceId = videoId in routes)
 const uploadVideo = async (req, res) => {
@@ -126,7 +126,11 @@ async function checkVideoAccess(prisma, userId, resourceIdInt, existingLessonRes
   const enrollment = await prisma.enrollment.findUnique({
     where: { userId_courseId: { userId: userIdNum, courseId } },
   });
-  return { allowed: !!enrollment && enrollment.status === ENROLLMENT_STATUS_ACTIVE };
+  return {
+    allowed:
+      !!enrollment &&
+      [ENROLLMENT_STATUS_ACTIVE, ENROLLMENT_STATUS_COMPLETED].includes(enrollment.status),
+  };
 }
 
 const getVideo = async (req, res) => {

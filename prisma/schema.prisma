@@ -290,7 +290,8 @@ model LessonResource {
   fileUrl    String  @map("file_url")
   fileType   String? @map("file_type")
 
-  lesson Lesson @relation(fields: [lessonId], references: [lessonId], onDelete: Cascade)
+  lesson                Lesson                  @relation(fields: [lessonId], references: [lessonId], onDelete: Cascade)
+  lessonResourceProgress LessonResourceProgress[]
 
   @@map("lesson_resources")
 }
@@ -398,6 +399,7 @@ model Enrollment {
   course                Course                 @relation(fields: [courseId], references: [courseId])
   order                 Order?                 @relation(fields: [orderId], references: [orderId])
   learningProgress      LearningProgress[]
+  lessonResourceProgress LessonResourceProgress[]
   quizAttempts          QuizAttempt[]
   assignmentSubmissions AssignmentSubmission[]
   certificate           Certificate?
@@ -412,6 +414,8 @@ model LearningProgress {
   lessonId          Int            @map("lesson_id")
   status            ProgressStatus @default(not_started)
   lastWatchedSecond Int            @default(0) @map("last_watched_second")
+  contentViewedAt   DateTime?      @map("content_viewed_at")
+  videoCompletedAt  DateTime?      @map("video_completed_at")
   completedAt       DateTime?      @map("completed_at")
 
   enrollment Enrollment @relation(fields: [enrollmentId], references: [enrollmentId], onDelete: Cascade)
@@ -419,6 +423,22 @@ model LearningProgress {
 
   @@unique([enrollmentId, lessonId])
   @@map("learning_progress")
+}
+
+model LessonResourceProgress {
+  resourceProgressId Int            @id @default(autoincrement()) @map("resource_progress_id")
+  enrollmentId       Int            @map("enrollment_id")
+  resourceId         Int            @map("resource_id")
+  status             ProgressStatus @default(not_started)
+  lastWatchedSecond  Int            @default(0) @map("last_watched_second")
+  viewedAt           DateTime?      @map("viewed_at")
+  completedAt        DateTime?      @map("completed_at")
+
+  enrollment Enrollment     @relation(fields: [enrollmentId], references: [enrollmentId], onDelete: Cascade)
+  resource   LessonResource @relation(fields: [resourceId], references: [resourceId], onDelete: Cascade)
+
+  @@unique([enrollmentId, resourceId])
+  @@map("lesson_resource_progress")
 }
 
 model CourseReview {

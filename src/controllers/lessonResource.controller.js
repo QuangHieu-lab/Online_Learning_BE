@@ -1,6 +1,6 @@
 const prisma = require('../utils/prisma');
 const path = require('path');
-const { ENROLLMENT_STATUS_ACTIVE } = require('../config/constants');
+const { ENROLLMENT_STATUS_ACTIVE, ENROLLMENT_STATUS_COMPLETED } = require('../config/constants');
 
 /** Check if user can access lesson: admin, instructor of course, or enrolled student with active enrollment. */
 async function canAccessLesson(prismaClient, lessonId, userId, roles = []) {
@@ -21,7 +21,9 @@ async function canAccessLesson(prismaClient, lessonId, userId, roles = []) {
   const enrollment = await prismaClient.enrollment.findUnique({
     where: { userId_courseId: { userId: userIdNum, courseId } },
   });
-  const allowed = !!enrollment && enrollment.status === ENROLLMENT_STATUS_ACTIVE;
+  const allowed =
+    !!enrollment &&
+    [ENROLLMENT_STATUS_ACTIVE, ENROLLMENT_STATUS_COMPLETED].includes(enrollment.status);
   return { allowed, lesson };
 }
 

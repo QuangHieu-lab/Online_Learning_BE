@@ -1,8 +1,4 @@
--- AlterTable
-ALTER TABLE `courses` ADD COLUMN `content_flagged` BOOLEAN NOT NULL DEFAULT false,
-    ADD COLUMN `content_flagged_at` DATETIME(3) NULL,
-    ADD COLUMN `content_flagged_by` INTEGER NULL,
-    ADD COLUMN `content_flagged_reason` TEXT NULL;
-
--- AddForeignKey
-ALTER TABLE `courses` ADD CONSTRAINT `courses_content_flagged_by_fkey` FOREIGN KEY (`content_flagged_by`) REFERENCES `users`(`user_id`) ON DELETE SET NULL ON UPDATE CASCADE;
+-- No-op migration.
+-- The content_flagged columns and foreign key were already added by
+-- 20260303000000_add_course_content_flagged, so this later migration must not
+-- re-apply the same schema changes during a full reset.

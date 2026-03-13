@@ -3,7 +3,7 @@ const prisma = require('../utils/prisma');
 const { isValidStatusTransition, canSubmit } = require('../utils/courseStatus');
 const { ensureCourseAccess, getCourseForInstructor, sendAccessError } = require('../utils/access.helpers');
 const { mapPrismaError } = require('../utils/error.utils');
-const { DEFAULT_COURSE_CATEGORY, DEFAULT_COURSE_LEVEL_TARGET, ENROLLMENT_STATUS_ACTIVE, COURSE_CATEGORIES, USER_LEVELS, COURSE_STATUSES } = require('../config/constants');
+const { DEFAULT_COURSE_CATEGORY, DEFAULT_COURSE_LEVEL_TARGET, ENROLLMENT_STATUS_ACTIVE, ENROLLMENT_STATUS_COMPLETED, COURSE_CATEGORIES, USER_LEVELS, COURSE_STATUSES } = require('../config/constants');
 const { uploadFileToFirebase } = require('../services/firebase-storage.service');
 
 const createCourse = async (req, res) => {
@@ -356,7 +356,11 @@ const getCourseModules = async (req, res) => {
           userId_courseId: { userId: userIdNum, courseId: course.courseId },
         },
       });
-      if (!enrollment || enrollment.status !== ENROLLMENT_STATUS_ACTIVE) {
+      if (
+        !enrollment ||
+        (enrollment.status !== ENROLLMENT_STATUS_ACTIVE &&
+          enrollment.status !== ENROLLMENT_STATUS_COMPLETED)
+      ) {
         return res.status(403).json({ error: 'Not authorized to view modules' });
       }
     }
@@ -482,7 +486,9 @@ const getCoursesByStudentId = async (req, res) => {
     const enrollments = await prisma.enrollment.findMany({
       where: {
         userId: studentIdInt, // Tìm tất cả dòng có userId này
-        status: ENROLLMENT_STATUS_ACTIVE,
+        status: {
+          in: [ENROLLMENT_STATUS_ACTIVE, ENROLLMENT_STATUS_COMPLETED, 'expired'],
+        },
       },
       orderBy: {
         enrolledAt: 'desc',   // Khóa nào mua gần nhất hiện lên đầu
@@ -521,7 +527,9 @@ const getCoursesByStudentId = async (req, res) => {
     const purchasedCourses = enrollments.map((item) => ({
       ...item.course,         // Lấy thông tin khóa học ra ngoài
       enrolledAt: item.enrolledAt, // Kèm ngày mua
-      expiryDate: item.expiryDate  // Kèm ngày hết hạn (nếu có)
+      expiryDate: item.expiryDate,  // Kèm ngày hết hạn (nếu có)
+      enrollmentStatus: item.status,
+      progressPercent: Number(item.progressPercent || 0),
     }));
 
     res.json(purchasedCourses);

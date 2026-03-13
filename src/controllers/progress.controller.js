@@ -1,103 +1,75 @@
 const prisma = require('../utils/prisma');
 const { ensureCertificateIssuedIfEligible } = require('./certificate.controller');
 const { mapPrismaError } = require('../utils/error.utils');
-const { PROGRESS_STATUS_COMPLETED, PROGRESS_STATUS_IN_PROGRESS, PROGRESS_STATUS_NOT_STARTED } = require('../config/constants');
-const { computeCourseProgress } = require('../utils/progress.utils');
+const {
+  ENROLLMENT_STATUS_ACTIVE,
+  ENROLLMENT_STATUS_COMPLETED,
+  PROGRESS_STATUS_COMPLETED,
+  PROGRESS_STATUS_IN_PROGRESS,
+  PROGRESS_STATUS_NOT_STARTED,
+} = require('../config/constants');
+const {
+  buildEnrollmentProgressSnapshot,
+  normalizeProgressStatus,
+} = require('../utils/progress.utils');
+const { getCourseForInstructor } = require('../utils/access.helpers');
 
-const updateProgress = async (req, res) => {
-  try {
-    const { lessonId } = req.params;
-    const { status, lastWatchedSecond } = req.body;
-    const userId = req.userId;
-    const lessonIdInt = parseInt(lessonId);
+function toInt(value) {
+  return typeof value === 'string' ? parseInt(value, 10) : value;
+}
 
-    if (isNaN(lessonIdInt)) {
-      return res.status(400).json({ error: 'Invalid lesson ID' });
-    }
+function isTrackableEnrollment(enrollment) {
+  return enrollment && [ENROLLMENT_STATUS_ACTIVE, ENROLLMENT_STATUS_COMPLETED].includes(enrollment.status);
+}
 
-    const lesson = await prisma.lesson.findUnique({
-      where: { lessonId: lessonIdInt },
-      include: {
-        module: {
-          include: {
-            course: true,
-          },
+async function getLessonContext(userId, lessonId) {
+  const lessonIdInt = toInt(lessonId);
+  if (Number.isNaN(lessonIdInt)) {
+    return { error: { status: 400, message: 'Invalid lesson ID' } };
+  }
+
+  const lesson = await prisma.lesson.findUnique({
+    where: { lessonId: lessonIdInt },
+    include: {
+      module: {
+        include: {
+          course: true,
         },
       },
-    });
+    },
+  });
 
-    if (!lesson) {
-      return res.status(404).json({ error: 'Lesson not found' });
-    }
+  if (!lesson) {
+    return { error: { status: 404, message: 'Lesson not found' } };
+  }
 
-    const enrollment = await prisma.enrollment.findUnique({
-      where: {
-        userId_courseId: {
-          userId,
-          courseId: lesson.module.course.courseId,
-        },
+  const userIdInt = toInt(userId);
+  const enrollment = await prisma.enrollment.findUnique({
+    where: {
+      userId_courseId: {
+        userId: userIdInt,
+        courseId: lesson.module.course.courseId,
       },
-    });
+    },
+  });
 
-    if (!enrollment) {
-      return res.status(403).json({ error: 'You must be enrolled in this course to track progress' });
-    }
+  if (!isTrackableEnrollment(enrollment)) {
+    return { error: { status: 403, message: 'You must be enrolled in this course to track progress' } };
+  }
 
-    let progressStatus = PROGRESS_STATUS_NOT_STARTED;
-    if (status === PROGRESS_STATUS_COMPLETED || status === true) {
-      progressStatus = PROGRESS_STATUS_COMPLETED;
-    } else if (status === PROGRESS_STATUS_IN_PROGRESS || lastWatchedSecond > 0) {
-      progressStatus = PROGRESS_STATUS_IN_PROGRESS;
-    }
+  return { lessonIdInt, userIdInt, lesson, enrollment };
+}
 
-    const learningProgress = await prisma.learningProgress.upsert({
-      where: {
-        enrollmentId_lessonId: {
-          enrollmentId: enrollment.enrollmentId,
-          lessonId: lessonIdInt,
-        },
-      },
-      update: {
-        status: progressStatus,
-        lastWatchedSecond: lastWatchedSecond || undefined,
-        completedAt: progressStatus === PROGRESS_STATUS_COMPLETED ? new Date() : undefined,
-      },
-      create: {
-        enrollmentId: enrollment.enrollmentId,
-        lessonId: lessonIdInt,
-        status: progressStatus,
-        lastWatchedSecond: lastWatchedSecond || 0,
-        completedAt: progressStatus === PROGRESS_STATUS_COMPLETED ? new Date() : null,
-      },
-    });
-let certificate = null;
+async function getResourceContext(userId, resourceId) {
+  const resourceIdInt = toInt(resourceId);
+  if (Number.isNaN(resourceIdInt)) {
+    return { error: { status: 400, message: 'Invalid resource ID' } };
+  }
 
-    // Chỉ kiểm tra khi user đã hoàn thành bài học này
-    if (progressStatus === PROGRESS_STATUS_COMPLETED) {
-      try {
-        certificate = await ensureCertificateIssuedIfEligible(
-          userId,
-          lesson.module.course.courseId
-        );
-      } catch (certError) {
-        console.error("Auto-issue certificate failed:", certError);
-        // Không throw error để tránh làm lỗi luồng update progress chính
-      }
-    }
-    // ============================================================
-
-    // Trả về kết quả kèm thông tin chứng chỉ (nếu có)
-    res.json({
-      ...learningProgress,
-      certificateEarned: !!certificate, // true nếu vừa nhận được bằng
-      certificateData: certificate      // Dữ liệu bằng để hiển thị popup
-    });
-  } catch (error) {
-    console.error('Update progress error:', error);
-    if (error.code === 'P2002') {
-      const lessonIdInt = parseInt(req.params.lessonId);
-      const lesson = await prisma.lesson.findUnique({
-        where: { lessonId: lessonIdInt },
+  const resource = await prisma.lessonResource.findUnique({
+    where: { resourceId: resourceIdInt },
+    include: {
+      lesson: {
         include: {
           module: {
             include: {
@@ -105,118 +77,482 @@ let certificate = null;
             },
           },
         },
-      });
-      if (lesson) {
-        const enrollment = await prisma.enrollment.findUnique({
-          where: {
-            userId_courseId: {
-              userId: req.userId,
-              courseId: lesson.module.course.courseId,
-            },
-          },
-        });
-        if (enrollment) {
-          const learningProgress = await prisma.learningProgress.update({
-            where: {
-              enrollmentId_lessonId: {
-                enrollmentId: enrollment.enrollmentId,
-                lessonId: lessonIdInt,
+      },
+    },
+  });
+
+  if (!resource) {
+    return { error: { status: 404, message: 'Resource not found' } };
+  }
+
+  const userIdInt = toInt(userId);
+  const enrollment = await prisma.enrollment.findUnique({
+    where: {
+      userId_courseId: {
+        userId: userIdInt,
+        courseId: resource.lesson.module.course.courseId,
+      },
+    },
+  });
+
+  if (!isTrackableEnrollment(enrollment)) {
+    return { error: { status: 403, message: 'You must be enrolled in this course to track progress' } };
+  }
+
+  return { resourceIdInt, userIdInt, resource, enrollment };
+}
+
+async function loadCourseProgressSnapshot(enrollment, courseId) {
+  const course = await prisma.course.findUnique({
+    where: { courseId },
+    include: {
+      modules: {
+        orderBy: { orderIndex: 'asc' },
+        include: {
+          lessons: {
+            orderBy: { orderIndex: 'asc' },
+            include: {
+              lessonResources: true,
+              quizzes: {
+                select: { quizId: true, title: true, passingScore: true },
               },
             },
-            data: {
-              status: req.body.status || 'in_progress',
-              lastWatchedSecond: req.body.lastWatchedSecond || undefined,
-              completedAt: req.body.status === PROGRESS_STATUS_COMPLETED ? new Date() : undefined,
-            },
-          });
-          return res.json(learningProgress);
-        }
-      }
+          },
+        },
+      },
+    },
+  });
+
+  if (!course) {
+    return null;
+  }
+
+  const lessonIds = course.modules.flatMap((module) => module.lessons.map((lesson) => lesson.lessonId));
+  const resourceIds = course.modules.flatMap((module) =>
+    module.lessons.flatMap((lesson) => lesson.lessonResources.map((resource) => resource.resourceId))
+  );
+  const quizIds = course.modules.flatMap((module) =>
+    module.lessons.flatMap((lesson) => lesson.quizzes.map((quiz) => quiz.quizId))
+  );
+
+  const [learningProgressRecords, resourceProgressRecords, quizAttempts] = await Promise.all([
+    prisma.learningProgress.findMany({
+      where: {
+        enrollmentId: enrollment.enrollmentId,
+        lessonId: { in: lessonIds.length > 0 ? lessonIds : [-1] },
+      },
+    }),
+    prisma.lessonResourceProgress.findMany({
+      where: {
+        enrollmentId: enrollment.enrollmentId,
+        resourceId: { in: resourceIds.length > 0 ? resourceIds : [-1] },
+      },
+    }),
+    prisma.quizAttempt.findMany({
+      where: {
+        enrollmentId: enrollment.enrollmentId,
+        quizId: { in: quizIds.length > 0 ? quizIds : [-1] },
+      },
+      orderBy: { completedAt: 'desc' },
+    }),
+  ]);
+
+  return buildEnrollmentProgressSnapshot({
+    enrollment,
+    course,
+    learningProgressRecords,
+    resourceProgressRecords,
+    quizAttempts,
+  });
+}
+
+async function syncLessonProgressState({ enrollment, lessonId, userId }) {
+  const snapshot = await loadCourseProgressSnapshot(enrollment, enrollment.courseId);
+  if (!snapshot) {
+    return { snapshot: null, learningProgress: null, certificate: null };
+  }
+
+  const lessonSnapshot = snapshot.modules
+    .flatMap((module) => module.lessons)
+    .find((lesson) => lesson.lessonId === lessonId);
+
+  let learningProgress = null;
+  if (lessonSnapshot) {
+    learningProgress = await prisma.learningProgress.upsert({
+      where: {
+        enrollmentId_lessonId: {
+          enrollmentId: enrollment.enrollmentId,
+          lessonId,
+        },
+      },
+      update: {
+        status: lessonSnapshot.status,
+        lastWatchedSecond: lessonSnapshot.lastWatchedSecond || 0,
+        contentViewedAt: lessonSnapshot.contentViewedAt,
+        videoCompletedAt: lessonSnapshot.videoCompletedAt,
+        completedAt: lessonSnapshot.status === PROGRESS_STATUS_COMPLETED ? lessonSnapshot.completedAt || new Date() : null,
+      },
+      create: {
+        enrollmentId: enrollment.enrollmentId,
+        lessonId,
+        status: lessonSnapshot.status,
+        lastWatchedSecond: lessonSnapshot.lastWatchedSecond || 0,
+        contentViewedAt: lessonSnapshot.contentViewedAt,
+        videoCompletedAt: lessonSnapshot.videoCompletedAt,
+        completedAt: lessonSnapshot.status === PROGRESS_STATUS_COMPLETED ? lessonSnapshot.completedAt || new Date() : null,
+      },
+    });
+  }
+
+  await prisma.enrollment.update({
+    where: { enrollmentId: enrollment.enrollmentId },
+    data: { progressPercent: snapshot.percentage },
+  });
+
+  let certificate = null;
+  if (lessonSnapshot?.status === PROGRESS_STATUS_COMPLETED) {
+    try {
+      certificate = await ensureCertificateIssuedIfEligible(userId, enrollment.courseId);
+    } catch (certError) {
+      console.error('Auto-issue certificate failed:', certError);
     }
+  }
+
+  return { snapshot, learningProgress, certificate };
+}
+
+async function markLessonStartedInternal(userId, lessonId) {
+  const context = await getLessonContext(userId, lessonId);
+  if (context.error) return context;
+
+  const { enrollment, lessonIdInt } = context;
+  await prisma.learningProgress.upsert({
+    where: {
+      enrollmentId_lessonId: {
+        enrollmentId: enrollment.enrollmentId,
+        lessonId: lessonIdInt,
+      },
+    },
+    update: {
+      status: PROGRESS_STATUS_IN_PROGRESS,
+    },
+    create: {
+      enrollmentId: enrollment.enrollmentId,
+      lessonId: lessonIdInt,
+      status: PROGRESS_STATUS_IN_PROGRESS,
+    },
+  });
+
+  const synced = await syncLessonProgressState({
+    enrollment,
+    lessonId: lessonIdInt,
+    userId: context.userIdInt,
+  });
+  return { ...context, ...synced };
+}
+
+async function markLessonViewedInternal(userId, lessonId) {
+  const context = await getLessonContext(userId, lessonId);
+  if (context.error) return context;
+
+  const { enrollment, lessonIdInt } = context;
+  await prisma.learningProgress.upsert({
+    where: {
+      enrollmentId_lessonId: {
+        enrollmentId: enrollment.enrollmentId,
+        lessonId: lessonIdInt,
+      },
+    },
+    update: {
+      status: PROGRESS_STATUS_IN_PROGRESS,
+      contentViewedAt: new Date(),
+    },
+    create: {
+      enrollmentId: enrollment.enrollmentId,
+      lessonId: lessonIdInt,
+      status: PROGRESS_STATUS_IN_PROGRESS,
+      contentViewedAt: new Date(),
+    },
+  });
+
+  const synced = await syncLessonProgressState({
+    enrollment,
+    lessonId: lessonIdInt,
+    userId: context.userIdInt,
+  });
+  return { ...context, ...synced };
+}
+
+async function updateLessonVideoProgressInternal(userId, lessonId, payload = {}) {
+  const context = await getLessonContext(userId, lessonId);
+  if (context.error) return context;
+
+  const { enrollment, lessonIdInt, lesson } = context;
+  if (!lesson.mediaUrl) {
+    return { error: { status: 400, message: 'This lesson does not have a primary video to track' } };
+  }
+
+  const watchedSecond = Math.max(0, Number(payload.lastWatchedSecond || payload.currentSecond || 0));
+  const durationSeconds = Math.max(0, Number(lesson.durationSeconds || payload.durationSeconds || 0));
+  const ended = Boolean(payload.ended) || (durationSeconds > 0 && watchedSecond >= Math.max(durationSeconds - 1, 0));
+
+  await prisma.learningProgress.upsert({
+    where: {
+      enrollmentId_lessonId: {
+        enrollmentId: enrollment.enrollmentId,
+        lessonId: lessonIdInt,
+      },
+    },
+    update: {
+      status: PROGRESS_STATUS_IN_PROGRESS,
+      lastWatchedSecond: watchedSecond,
+      ...(ended ? { videoCompletedAt: new Date() } : {}),
+    },
+    create: {
+      enrollmentId: enrollment.enrollmentId,
+      lessonId: lessonIdInt,
+      status: PROGRESS_STATUS_IN_PROGRESS,
+      lastWatchedSecond: watchedSecond,
+      videoCompletedAt: ended ? new Date() : null,
+    },
+  });
+
+  const synced = await syncLessonProgressState({
+    enrollment,
+    lessonId: lessonIdInt,
+    userId: context.userIdInt,
+  });
+  return { ...context, ...synced };
+}
+
+async function markResourceViewedInternal(userId, resourceId) {
+  const context = await getResourceContext(userId, resourceId);
+  if (context.error) return context;
+
+  const { enrollment, resourceIdInt, resource } = context;
+  await prisma.lessonResourceProgress.upsert({
+    where: {
+      enrollmentId_resourceId: {
+        enrollmentId: enrollment.enrollmentId,
+        resourceId: resourceIdInt,
+      },
+    },
+    update: {
+      status: PROGRESS_STATUS_COMPLETED,
+      viewedAt: new Date(),
+      completedAt: new Date(),
+    },
+    create: {
+      enrollmentId: enrollment.enrollmentId,
+      resourceId: resourceIdInt,
+      status: PROGRESS_STATUS_COMPLETED,
+      viewedAt: new Date(),
+      completedAt: new Date(),
+    },
+  });
+
+  const synced = await syncLessonProgressState({
+    enrollment,
+    lessonId: resource.lessonId,
+    userId: context.userIdInt,
+  });
+  return { ...context, ...synced };
+}
+
+async function updateResourceVideoProgressInternal(userId, resourceId, payload = {}) {
+  const context = await getResourceContext(userId, resourceId);
+  if (context.error) return context;
+
+  const { enrollment, resourceIdInt, resource } = context;
+  if (String(resource.fileType || '').toLowerCase() !== 'video') {
+    return { error: { status: 400, message: 'This resource is not a video' } };
+  }
+
+  const watchedSecond = Math.max(0, Number(payload.lastWatchedSecond || payload.currentSecond || 0));
+  const durationSeconds = Math.max(0, Number(payload.durationSeconds || 0));
+  const ended = Boolean(payload.ended) || (durationSeconds > 0 && watchedSecond >= Math.max(durationSeconds - 1, 0));
+
+  await prisma.lessonResourceProgress.upsert({
+    where: {
+      enrollmentId_resourceId: {
+        enrollmentId: enrollment.enrollmentId,
+        resourceId: resourceIdInt,
+      },
+    },
+    update: {
+      status: ended ? PROGRESS_STATUS_COMPLETED : PROGRESS_STATUS_IN_PROGRESS,
+      lastWatchedSecond: watchedSecond,
+      viewedAt: new Date(),
+      completedAt: ended ? new Date() : null,
+    },
+    create: {
+      enrollmentId: enrollment.enrollmentId,
+      resourceId: resourceIdInt,
+      status: ended ? PROGRESS_STATUS_COMPLETED : PROGRESS_STATUS_IN_PROGRESS,
+      lastWatchedSecond: watchedSecond,
+      viewedAt: new Date(),
+      completedAt: ended ? new Date() : null,
+    },
+  });
+
+  const synced = await syncLessonProgressState({
+    enrollment,
+    lessonId: resource.lessonId,
+    userId: context.userIdInt,
+  });
+  return { ...context, ...synced };
+}
+
+const updateProgress = async (req, res) => {
+  try {
+    const { status, action, lastWatchedSecond, durationSeconds, ended } = req.body || {};
+    let result;
+
+    if (status === PROGRESS_STATUS_IN_PROGRESS || action === 'start') {
+      result = await markLessonStartedInternal(req.userId, req.params.lessonId);
+    } else if (
+      status === PROGRESS_STATUS_COMPLETED ||
+      action === 'mark_viewed' ||
+      action === 'viewed'
+    ) {
+      result = await markLessonViewedInternal(req.userId, req.params.lessonId);
+    } else if (lastWatchedSecond != null || durationSeconds != null || ended) {
+      result = await updateLessonVideoProgressInternal(req.userId, req.params.lessonId, req.body);
+    } else {
+      return res.status(400).json({ error: 'Unsupported progress update payload' });
+    }
+
+    if (result.error) {
+      return res.status(result.error.status).json({ error: result.error.message });
+    }
+
+    return res.json({
+      ...(result.learningProgress || {}),
+      certificateEarned: !!result.certificate,
+      certificateData: result.certificate,
+      courseProgress: result.snapshot,
+    });
+  } catch (error) {
+    console.error('Update progress error:', error);
     const { status, message } = mapPrismaError(error);
     return res.status(status).json({ error: message });
   }
 };
 
+const markLessonStarted = async (req, res) => {
+  try {
+    const result = await markLessonStartedInternal(req.userId, req.params.lessonId);
+    if (result.error) {
+      return res.status(result.error.status).json({ error: result.error.message });
+    }
+    return res.json({ ...(result.learningProgress || {}), courseProgress: result.snapshot });
+  } catch (error) {
+    console.error('Mark lesson started error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+};
+
+const markLessonViewed = async (req, res) => {
+  try {
+    const result = await markLessonViewedInternal(req.userId, req.params.lessonId);
+    if (result.error) {
+      return res.status(result.error.status).json({ error: result.error.message });
+    }
+    return res.json({
+      ...(result.learningProgress || {}),
+      certificateEarned: !!result.certificate,
+      certificateData: result.certificate,
+      courseProgress: result.snapshot,
+    });
+  } catch (error) {
+    console.error('Mark lesson viewed error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+};
+
+const updateLessonVideoProgress = async (req, res) => {
+  try {
+    const result = await updateLessonVideoProgressInternal(req.userId, req.params.lessonId, req.body || {});
+    if (result.error) {
+      return res.status(result.error.status).json({ error: result.error.message });
+    }
+    return res.json({
+      ...(result.learningProgress || {}),
+      certificateEarned: !!result.certificate,
+      certificateData: result.certificate,
+      courseProgress: result.snapshot,
+    });
+  } catch (error) {
+    console.error('Update lesson video progress error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+};
+
+const markResourceViewed = async (req, res) => {
+  try {
+    const result = await markResourceViewedInternal(req.userId, req.params.resourceId);
+    if (result.error) {
+      return res.status(result.error.status).json({ error: result.error.message });
+    }
+    return res.json({
+      resourceId: result.resourceIdInt,
+      lessonId: result.resource.lessonId,
+      courseProgress: result.snapshot,
+      certificateEarned: !!result.certificate,
+      certificateData: result.certificate,
+    });
+  } catch (error) {
+    console.error('Mark resource viewed error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+};
+
+const updateResourceVideoProgress = async (req, res) => {
+  try {
+    const result = await updateResourceVideoProgressInternal(req.userId, req.params.resourceId, req.body || {});
+    if (result.error) {
+      return res.status(result.error.status).json({ error: result.error.message });
+    }
+    return res.json({
+      resourceId: result.resourceIdInt,
+      lessonId: result.resource.lessonId,
+      courseProgress: result.snapshot,
+      certificateEarned: !!result.certificate,
+      certificateData: result.certificate,
+    });
+  } catch (error) {
+    console.error('Update resource video progress error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+};
+
 const getProgress = async (req, res) => {
   try {
-    const { courseId } = req.params;
-    const courseIdInt = parseInt(courseId);
-    const userId = req.userId;
-
-    if (isNaN(courseIdInt)) {
+    const courseIdInt = toInt(req.params.courseId);
+    if (Number.isNaN(courseIdInt)) {
       return res.status(400).json({ error: 'Invalid course ID' });
     }
 
+    const userIdInt = toInt(req.userId);
     const enrollment = await prisma.enrollment.findUnique({
       where: {
         userId_courseId: {
-          userId,
+          userId: userIdInt,
           courseId: courseIdInt,
         },
       },
     });
 
-    if (!enrollment) {
+    if (!isTrackableEnrollment(enrollment)) {
       return res.status(403).json({ error: 'You must be enrolled in this course' });
     }
 
-    const course = await prisma.course.findUnique({
-      where: { courseId: courseIdInt },
-      include: {
-        modules: {
-          include: {
-            lessons: true,
-          },
-        },
-      },
-    });
-
-    if (!course) {
+    const snapshot = await loadCourseProgressSnapshot(enrollment, courseIdInt);
+    if (!snapshot) {
       return res.status(404).json({ error: 'Course not found' });
     }
 
-    const allLessonIds = course.modules.flatMap((module) =>
-      module.lessons.map((lesson) => lesson.lessonId)
-    );
-
-    const progressRecords = await prisma.learningProgress.findMany({
-      where: {
-        enrollmentId: enrollment.enrollmentId,
-        lessonId: {
-          in: allLessonIds,
-        },
-      },
-    });
-
-    const progressMap = new Map(progressRecords.map((p) => [p.lessonId, p]));
-    const enrollmentWithProgress = { ...enrollment, learningProgress: progressRecords };
-    const { completedCount: completedLessons, total: totalLessons, percent: percentage } = computeCourseProgress(enrollmentWithProgress, course);
-
-    const progress = {
-      courseId: course.courseId,
-      courseTitle: course.title,
-      enrollmentId: enrollment.enrollmentId,
-      totalLessons,
-      completedLessons,
-      percentage,
-      modules: course.modules.map((module) => ({
-        moduleId: module.moduleId,
-        moduleTitle: module.title,
-        lessons: module.lessons.map((lesson) => {
-          const progressRecord = progressMap.get(lesson.lessonId);
-          return {
-            lessonId: lesson.lessonId,
-            lessonTitle: lesson.title,
-            status: progressRecord?.status || PROGRESS_STATUS_NOT_STARTED,
-            lastWatchedSecond: progressRecord?.lastWatchedSecond || 0,
-            completedAt: progressRecord?.completedAt || null,
-          };
-        }),
-      })),
-    };
-
-    res.json(progress);
+    res.json(snapshot);
   } catch (error) {
     console.error('Get progress error:', error);
     res.status(500).json({ error: 'Internal server error' });
@@ -225,46 +561,132 @@ const getProgress = async (req, res) => {
 
 const getUserProgress = async (req, res) => {
   try {
-    const userId = req.userId;
-
+    const userIdInt = toInt(req.userId);
     const enrollments = await prisma.enrollment.findMany({
-      where: { userId },
-      include: {
-        course: {
-          include: {
-            modules: {
-              include: {
-                lessons: true,
-              },
-            },
-          },
+      where: {
+        userId: userIdInt,
+        status: {
+          in: [ENROLLMENT_STATUS_ACTIVE, ENROLLMENT_STATUS_COMPLETED],
         },
-        learningProgress: true,
       },
+      orderBy: { enrolledAt: 'desc' },
     });
 
-    const progress = enrollments.map((enrollment) => {
-      const course = enrollment.course;
-      const { completedCount: completedLessons, total: totalLessons, percent: percentage } = computeCourseProgress(enrollment, course);
-      return {
-        courseId: course.courseId,
-        courseTitle: course.title,
-        enrollmentId: enrollment.enrollmentId,
-        totalLessons,
-        completedLessons,
-        percentage,
-      };
-    });
+    const progress = await Promise.all(
+      enrollments.map(async (enrollment) => {
+        const snapshot = await loadCourseProgressSnapshot(enrollment, enrollment.courseId);
+        return snapshot
+          ? {
+              courseId: snapshot.courseId,
+              courseTitle: snapshot.courseTitle,
+              enrollmentId: snapshot.enrollmentId,
+              totalLessons: snapshot.totalLessons,
+              completedLessons: snapshot.completedLessons,
+              percentage: snapshot.percentage,
+              currentModule: snapshot.currentModule,
+              currentLesson: snapshot.currentLesson,
+            }
+          : null;
+      })
+    );
 
-    res.json(progress);
+    res.json(progress.filter(Boolean));
   } catch (error) {
     console.error('Get user progress error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 };
 
+const getInstructorCourseStudentsProgress = async (req, res) => {
+  try {
+    const courseIdInt = toInt(req.params.courseId);
+    if (Number.isNaN(courseIdInt)) {
+      return res.status(400).json({ error: 'Invalid course ID' });
+    }
+
+    const access = await getCourseForInstructor(courseIdInt, req.userId);
+    if (access.error) {
+      return res.status(access.error.status).json({ error: access.error.message });
+    }
+
+    const enrollments = await prisma.enrollment.findMany({
+      where: {
+        courseId: courseIdInt,
+        status: {
+          in: [ENROLLMENT_STATUS_ACTIVE, ENROLLMENT_STATUS_COMPLETED],
+        },
+      },
+      include: {
+        user: {
+          select: {
+            userId: true,
+            fullName: true,
+            email: true,
+          },
+        },
+      },
+      orderBy: { enrolledAt: 'desc' },
+    });
+
+    const students = await Promise.all(
+      enrollments.map(async (enrollment) => {
+        const snapshot = await loadCourseProgressSnapshot(enrollment, courseIdInt);
+        const completedLessonDates = snapshot
+          ? snapshot.modules
+              .flatMap((module) => module.lessons)
+              .map((lesson) => lesson.completedAt)
+              .filter(Boolean)
+          : [];
+        const courseCompletedAt =
+          snapshot && Number(snapshot.percentage) >= 100 && completedLessonDates.length > 0
+            ? new Date(
+                Math.max(...completedLessonDates.map((value) => new Date(value).getTime()))
+              )
+            : null;
+        const completionDurationMs =
+          courseCompletedAt && enrollment.enrolledAt
+            ? courseCompletedAt.getTime() - new Date(enrollment.enrolledAt).getTime()
+            : null;
+
+        return snapshot
+          ? {
+              student: enrollment.user,
+              enrollmentId: enrollment.enrollmentId,
+              enrolledAt: enrollment.enrolledAt,
+              enrollmentStatus: enrollment.status,
+              courseCompletedAt,
+              completionDurationMs,
+              progressPercent: snapshot.percentage,
+              completedLessons: snapshot.completedLessons,
+              totalLessons: snapshot.totalLessons,
+              currentModule: snapshot.currentModule,
+              currentLesson: snapshot.currentLesson,
+              modules: snapshot.modules,
+            }
+          : null;
+      })
+    );
+
+    res.json({
+      courseId: courseIdInt,
+      courseTitle: access.course.title,
+      students: students.filter(Boolean),
+    });
+  } catch (error) {
+    console.error('Get instructor course students progress error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+};
+
 module.exports = {
-  updateProgress,
+  getInstructorCourseStudentsProgress,
   getProgress,
   getUserProgress,
+  markLessonStarted,
+  markLessonViewed,
+  markResourceViewed,
+  updateLessonVideoProgress,
+  updateProgress,
+  updateResourceVideoProgress,
+  syncLessonProgressState,
 };

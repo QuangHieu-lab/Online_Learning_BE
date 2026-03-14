@@ -5,6 +5,48 @@ const { findOrCreateUserFromGoogleToken, sendPostAuthEmails } = require('../serv
 const { setAuthCookie, clearAuthCookie, setAuthCookieAndBuildUserResponse } = require('../utils/auth.utils');
 const { BCRYPT_ROUNDS, REFRESH_FROM_PAYMENT_WINDOW_MS } = require('../config/constants');
 
+function toInt(value) {
+  return typeof value === 'string' ? Number.parseInt(value, 10) : value;
+}
+
+function mapInstructorProfile(profile) {
+  if (!profile) return null;
+
+  const bankInfo =
+    profile.bankAccountInfo && typeof profile.bankAccountInfo === 'object'
+      ? profile.bankAccountInfo
+      : {};
+
+  return {
+    bio: profile.bio || '',
+    expertise: profile.expertise || '',
+    workEmail: profile.workEmail || '',
+    workPhone: profile.workPhone || '',
+    bankAccountInfo: {
+      bankName: bankInfo.bankName || '',
+      accountNumber: bankInfo.accountNumber || '',
+      accountName: bankInfo.accountName || '',
+    },
+  };
+}
+
+function buildUserPayload(user) {
+  const roles = (user.userRoles || []).map((ur) => ur.role.roleName);
+
+  return {
+    userId: user.userId,
+    email: user.email,
+    fullName: user.fullName,
+    phoneNumber: user.phoneNumber,
+    avatarUrl: user.avatarUrl,
+    currentLevel: user.currentLevel,
+    roles,
+    createdAt: user.createdAt,
+    updatedAt: user.updatedAt,
+    instructorProfile: mapInstructorProfile(user.instructorProfile),
+  };
+}
+
 const register = async (req, res) => {
   try {
     const { email, password, name, role } = req.body;
@@ -157,13 +199,14 @@ const getMe = async (req, res) => {
     }
 
     const user = await prisma.user.findUnique({
-      where: { userId: typeof userId === 'string' ? parseInt(userId) : userId },
+      where: { userId: toInt(userId) },
       include: {
         userRoles: {
           include: {
             role: true,
           },
         },
+        instructorProfile: true,
       },
     });
 
@@ -171,20 +214,8 @@ const getMe = async (req, res) => {
       return res.status(404).json({ error: 'User not found' });
     }
 
-    const roles = user.userRoles.map((ur) => ur.role.roleName);
-
     res.json({
-      user: {
-        userId: user.userId,
-        email: user.email,
-        fullName: user.fullName,
-        phoneNumber: user.phoneNumber,
-        avatarUrl: user.avatarUrl,
-        currentLevel: user.currentLevel,
-        roles,
-        createdAt: user.createdAt,
-        updatedAt: user.updatedAt,
-      },
+      user: buildUserPayload(user),
     });
   } catch (error) {
     console.error('Get me error:', error);
@@ -197,7 +228,21 @@ const updateProfile = async (req, res) => {
     const userId = req.userId;
     if (!userId) return res.status(401).json({ error: 'Unauthorized' });
 
-    const { fullName, phoneNumber, avatarUrl, currentLevel, newPassword } = req.body;
+    const {
+      fullName,
+      phoneNumber,
+      avatarUrl,
+      currentLevel,
+      newPassword,
+      bio,
+      expertise,
+      workEmail,
+      workPhone,
+      bankAccountInfo,
+      bankName,
+      accountNumber,
+      accountName,
+    } = req.body;
 
     const validLevels = ['A0', 'A1', 'A2', 'B1', 'B2', 'C1', 'C2'];
     if (currentLevel !== undefined && !validLevels.includes(currentLevel)) {
@@ -213,33 +258,107 @@ const updateProfile = async (req, res) => {
       updateData.passwordHash = await bcrypt.hash(newPassword, BCRYPT_ROUNDS);
     }
 
-    if (Object.keys(updateData).length === 0) {
-      return res.status(400).json({ error: 'No valid fields to update' });
-    }
-
-    const user = await prisma.user.update({
-      where: { userId: typeof userId === 'string' ? parseInt(userId) : userId },
-      data: updateData,
+    const existingUser = await prisma.user.findUnique({
+      where: { userId: toInt(userId) },
       include: {
         userRoles: { include: { role: true } },
+        instructorProfile: true,
       },
     });
 
-    const roles = user.userRoles.map((ur) => ur.role.roleName);
+    if (!existingUser) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    const roles = existingUser.userRoles.map((ur) => ur.role.roleName);
+    const isInstructor = roles.includes('instructor');
+    const instructorFieldsProvided = [
+      bio,
+      expertise,
+      workEmail,
+      workPhone,
+      bankAccountInfo,
+      bankName,
+      accountNumber,
+      accountName,
+    ].some((value) => value !== undefined);
+
+    if (Object.keys(updateData).length === 0 && !instructorFieldsProvided) {
+      return res.status(400).json({ error: 'No valid fields to update' });
+    }
+
+    if (Object.keys(updateData).length > 0) {
+      await prisma.user.update({
+        where: { userId: toInt(userId) },
+        data: updateData,
+      });
+    }
+
+    if (isInstructor || instructorFieldsProvided) {
+      const currentBankInfo =
+        existingUser.instructorProfile?.bankAccountInfo &&
+        typeof existingUser.instructorProfile.bankAccountInfo === 'object'
+          ? existingUser.instructorProfile.bankAccountInfo
+          : {};
+      const incomingBankInfo =
+        bankAccountInfo && typeof bankAccountInfo === 'object'
+          ? bankAccountInfo
+          : {
+              bankName,
+              accountNumber,
+              accountName,
+            };
+
+      await prisma.instructorProfile.upsert({
+        where: { userId: toInt(userId) },
+        update: {
+          ...(bio !== undefined && { bio: bio || null }),
+          ...(expertise !== undefined && { expertise: expertise || null }),
+          ...(workEmail !== undefined && { workEmail: workEmail || null }),
+          ...(workPhone !== undefined && { workPhone: workPhone || null }),
+          ...(instructorFieldsProvided && {
+            bankAccountInfo: {
+              bankName:
+                incomingBankInfo.bankName !== undefined
+                  ? incomingBankInfo.bankName || ''
+                  : currentBankInfo.bankName || '',
+              accountNumber:
+                incomingBankInfo.accountNumber !== undefined
+                  ? incomingBankInfo.accountNumber || ''
+                  : currentBankInfo.accountNumber || '',
+              accountName:
+                incomingBankInfo.accountName !== undefined
+                  ? incomingBankInfo.accountName || ''
+                  : currentBankInfo.accountName || '',
+            },
+          }),
+        },
+        create: {
+          userId: toInt(userId),
+          bio: bio || null,
+          expertise: expertise || null,
+          workEmail: workEmail || null,
+          workPhone: workPhone || null,
+          bankAccountInfo: {
+            bankName: incomingBankInfo.bankName || '',
+            accountNumber: incomingBankInfo.accountNumber || '',
+            accountName: incomingBankInfo.accountName || '',
+          },
+        },
+      });
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { userId: toInt(userId) },
+      include: {
+        userRoles: { include: { role: true } },
+        instructorProfile: true,
+      },
+    });
 
     res.json({
       message: 'Profile updated successfully',
-      user: {
-        userId: user.userId,
-        email: user.email,
-        fullName: user.fullName,
-        phoneNumber: user.phoneNumber,
-        avatarUrl: user.avatarUrl,
-        currentLevel: user.currentLevel,
-        roles,
-        createdAt: user.createdAt,
-        updatedAt: user.updatedAt,
-      },
+      user: buildUserPayload(user),
     });
   } catch (error) {
     console.error('Update profile error:', error);

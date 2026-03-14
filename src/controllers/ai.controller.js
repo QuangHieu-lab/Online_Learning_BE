@@ -5,9 +5,57 @@ const {
   getStructuredTutorResponse,
   getAIHint,
   analyzeKnowledgeGaps,
+  analyzeSpeakingTranscript,
 } = require('../services/gemini.service');
 const { handleAIOrServiceError } = require('../utils/error.utils');
 const { DEFAULT_PASSING_SCORE, DEFAULT_TIME_LIMIT_MINUTES } = require('../config/constants');
+const { ensureLessonAccessWithCourse, sendAccessError } = require('../utils/access.helpers');
+
+function isSpeakingLesson(lesson) {
+  const haystack = [
+    lesson?.title,
+    lesson?.contentText,
+    lesson?.module?.title,
+    lesson?.module?.course?.title,
+    ...(lesson?.lessonResources || []).map((resource) => resource.title),
+  ]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase();
+
+  return lesson?.type === 'audio' || /speaking|pronunciation|fluency|oral|cue card/.test(haystack);
+}
+
+function buildTutorFallbackResponse(lesson, lessonContent) {
+  const fallbackSections = [
+    `I'm temporarily using lesson context instead of the live AI service.`,
+    `Lesson: ${lesson.title}`,
+  ];
+
+  if (lesson.contentText) {
+    fallbackSections.push(`Key lesson content:\n${lesson.contentText.slice(0, 500)}`);
+  }
+
+  if ((lesson.lessonResources || []).length > 0) {
+    fallbackSections.push(
+      `Resources to review: ${(lesson.lessonResources || [])
+        .map((resource) => resource.title)
+        .filter(Boolean)
+        .join(', ')}`
+    );
+  }
+
+  if ((lesson.quizzes || []).length > 0) {
+    fallbackSections.push(`Quiz available: ${(lesson.quizzes || []).map((quiz) => quiz.title || 'Quiz').join(', ')}`);
+  }
+
+  if (!lesson.contentText && !lesson.lessonResources?.length && !lesson.quizzes?.length) {
+    fallbackSections.push(`Current lesson context:\n${lessonContent.slice(0, 500)}`);
+  }
+
+  fallbackSections.push('Please ask about the current lesson, vocabulary, or exercises and I will help from the lesson context.');
+  return fallbackSections.join('\n\n');
+}
 
 const generateQuiz = async (req, res) => {
   try {
@@ -64,85 +112,106 @@ const generateQuiz = async (req, res) => {
 const chatWithTutor = async (req, res) => {
   try {
     const { lessonId } = req.params;
-    const { message } = req.body;
+    const { message, history } = req.body;
     const userId = req.userId;
-    const lessonIdInt = lessonId ? parseInt(lessonId) : null;
+    const lessonIdInt = lessonId ? parseInt(lessonId, 10) : null;
+    const trimmedMessage = String(message || '').trim();
 
-    if (!message) {
+    if (!trimmedMessage) {
       return res.status(400).json({ error: 'Message is required' });
     }
 
-    let lessonContent = '';
-    let structuredData = null;
+    if (!lessonIdInt || Number.isNaN(lessonIdInt)) {
+      return res.status(400).json({ error: 'Valid lesson ID is required' });
+    }
 
-    if (lessonIdInt && !isNaN(lessonIdInt)) {
-      const lesson = await prisma.lesson.findUnique({
-        where: { lessonId: lessonIdInt },
-        include: {
-          module: {
-            include: {
-              course: true,
-            },
-          },
-          quizzes: {
-            include: {
-              questions: {
-                include: {
-                  questionAnswers: true,
-                },
-                take: 5,
-              },
-            },
-            take: 2,
+    const access = await ensureLessonAccessWithCourse(lessonIdInt, userId, { roles: req.userRoles || [] });
+    if (access.error) {
+      return sendAccessError(res, access.error);
+    }
+
+    const lesson = await prisma.lesson.findUnique({
+      where: { lessonId: lessonIdInt },
+      include: {
+        module: {
+          include: {
+            course: true,
           },
         },
-      });
+        quizzes: {
+          include: {
+            questions: {
+              include: {
+                questionAnswers: true,
+              },
+              take: 5,
+            },
+          },
+          take: 2,
+        },
+        lessonResources: {
+          select: {
+            title: true,
+            fileType: true,
+          },
+        },
+      },
+    });
 
-      if (lesson) {
-        const quizContent = lesson.quizzes
-          .map((quiz) => {
-            const questions = quiz.questions
-              .map((q) => `Q: ${q.contentText}`)
-              .join('\n');
-            return `Quiz: ${quiz.title}\n${questions}`;
-          })
-          .join('\n\n');
+    if (!lesson) {
+      return res.status(404).json({ error: 'Lesson not found' });
+    }
 
-        lessonContent = `
+    const quizContent = lesson.quizzes
+      .map((quiz) => {
+        const questions = quiz.questions
+          .map((q) => `Q: ${q.contentText}`)
+          .join('\n');
+        return `Quiz: ${quiz.title}\n${questions}`;
+      })
+      .join('\n\n');
+    const resourceContent = (lesson.lessonResources || [])
+      .map((resource) => `Resource (${resource.fileType || 'file'}): ${resource.title || 'Untitled'}`)
+      .join('\n');
+
+    const lessonContent = `
 Lesson: ${lesson.title}
 ${lesson.contentText || ''}
+Course: ${lesson.module?.course?.title || ''}
 ${quizContent ? `\nQuizzes:\n${quizContent}` : ''}
-        `.trim();
+${resourceContent ? `\nResources:\n${resourceContent}` : ''}
+    `.trim();
 
-        structuredData = await getStructuredTutorResponse(message, lessonContent);
-      }
+    let aiResult;
+    try {
+      aiResult = await getAITutorResponse(trimmedMessage, lessonContent, { history });
+    } catch (aiError) {
+      console.error('AI tutor live generation failed, using fallback response:', aiError);
+      aiResult = {
+        answer: buildTutorFallbackResponse(lesson, lessonContent),
+        refusalReason: null,
+        tokensUsed: 0,
+      };
     }
-
-    let aiResponse;
-    if (structuredData) {
-      aiResponse = `Gợi ý:\n${structuredData.hints}\n\nBài tập:\n${structuredData.exercises.map((ex, i) => `${i + 1}. ${ex.question}`).join('\n')}\n\nLời giải chi tiết:\n${structuredData.solution}`;
-    } else {
-      aiResponse = (await getAITutorResponse(message, lessonContent ? lessonContent : undefined)) ?? '';
-    }
+    const aiResponse = aiResult?.answer || aiResult?.refusalReason || '';
 
     const chat = await prisma.aITutorChat.create({
       data: {
         userId,
         lessonId: lessonIdInt,
-        userQuery: message,
+        userQuery: trimmedMessage,
         aiResponse,
-        tokensUsed: 0,
+        tokensUsed: Number(aiResult?.tokensUsed || 0),
       },
     });
 
     const responsePayload = {
       response: aiResponse,
       chatId: chat.chatId,
+      refusalReason: aiResult?.refusalReason || null,
+      tokensUsed: Number(aiResult?.tokensUsed || 0),
+      isRefused: Boolean(aiResult?.refusalReason),
     };
-
-    if (structuredData) {
-      responsePayload.structuredData = structuredData;
-    }
 
     res.json(responsePayload);
   } catch (error) {
@@ -347,6 +416,113 @@ const getKnowledgeGaps = async (req, res) => {
   }
 };
 
+const submitSpeakingPractice = async (req, res) => {
+  try {
+    const { lessonId } = req.params;
+    const { transcriptText, audioUrl } = req.body;
+    const userId = req.userId;
+
+    const access = await ensureLessonAccessWithCourse(lessonId, userId, { roles: req.userRoles || [] });
+    if (access.error) {
+      return sendAccessError(res, access.error);
+    }
+
+    const lesson = await prisma.lesson.findUnique({
+      where: { lessonId: Number.parseInt(lessonId, 10) },
+      include: {
+        module: {
+          include: {
+            course: true,
+          },
+        },
+        lessonResources: {
+          select: {
+            title: true,
+          },
+        },
+      },
+    });
+
+    if (!lesson) {
+      return res.status(404).json({ error: 'Lesson not found' });
+    }
+
+    if (!isSpeakingLesson(lesson)) {
+      return res.status(400).json({ error: 'This lesson does not support speaking practice' });
+    }
+
+    const cueCardText = (lesson.lessonResources || [])
+      .map((resource) => resource.title)
+      .join('\n');
+    const analysis = await analyzeSpeakingTranscript(transcriptText, `${lesson.title}\n${cueCardText}`);
+
+    const log = await prisma.aISpeakingLog.create({
+      data: {
+        userId,
+        lessonId: lesson.lessonId,
+        audioUrl: String(audioUrl || '').trim() || null,
+        transcriptText: analysis.transcriptText,
+        pronunciationScore: analysis.pronunciationScore,
+        fluencyScore: analysis.fluencyScore,
+        errorsDetected: analysis.errorsDetected,
+      },
+    });
+
+    return res.status(201).json({
+      message: 'Speaking practice analyzed successfully',
+      log: {
+        logId: log.logId,
+        transcriptText: log.transcriptText,
+        pronunciationScore: Number(log.pronunciationScore),
+        fluencyScore: Number(log.fluencyScore),
+        errorsDetected: log.errorsDetected || [],
+        createdAt: log.createdAt,
+      },
+    });
+  } catch (error) {
+    return handleAIOrServiceError(error, res, {
+      defaultMessage: 'Unable to analyze speaking practice',
+    });
+  }
+};
+
+const getSpeakingHistory = async (req, res) => {
+  try {
+    const { lessonId } = req.params;
+    const userId = req.userId;
+
+    const access = await ensureLessonAccessWithCourse(lessonId, userId, { roles: req.userRoles || [] });
+    if (access.error) {
+      return sendAccessError(res, access.error);
+    }
+
+    const logs = await prisma.aISpeakingLog.findMany({
+      where: {
+        userId,
+        lessonId: Number.parseInt(lessonId, 10),
+      },
+      orderBy: {
+        createdAt: 'desc',
+      },
+    });
+
+    return res.json({
+      logs: logs.map((log) => ({
+        logId: log.logId,
+        transcriptText: log.transcriptText,
+        pronunciationScore: Number(log.pronunciationScore),
+        fluencyScore: Number(log.fluencyScore),
+        errorsDetected: log.errorsDetected || [],
+        createdAt: log.createdAt,
+      })),
+    });
+  } catch (error) {
+    return handleAIOrServiceError(error, res, {
+      defaultMessage: 'Unable to load speaking history',
+    });
+  }
+};
+
 /** Normalize one question from payload (content/contentText/question, answers/options) and ensure exactly one correct */
 function normalizeApplyQuestion(q) {
   const content = (q.content || q.contentText || q.question || '').trim();
@@ -463,6 +639,8 @@ module.exports = {
   generateQuiz,
   applyGeneratedQuiz,
   chatWithTutor,
+  submitSpeakingPractice,
+  getSpeakingHistory,
   getHint,
   getKnowledgeGaps,
 };

@@ -4,12 +4,26 @@ const {
   ENROLLMENT_STATUS_COMPLETED,
 } = require('../config/constants');
 
+const FLAGGED_COURSE_MESSAGE =
+  'This course is temporarily unavailable because it has been flagged by the admin. Please come back later.';
+
 function parseId(value, name) {
   const n = typeof value === 'string' ? parseInt(value, 10) : value;
   if (Number.isNaN(n)) {
     return { error: { status: 400, message: `Invalid ${name}` } };
   }
   return { value: n };
+}
+
+function isAdminRole(roles = []) {
+  return Array.isArray(roles) && roles.includes('admin');
+}
+
+function getFlaggedCourseError(course, roles = []) {
+  if (course?.contentFlagged && !isAdminRole(roles)) {
+    return { status: 403, message: FLAGGED_COURSE_MESSAGE };
+  }
+  return null;
 }
 
 /**
@@ -27,7 +41,7 @@ async function ensureLessonAccess(lessonId, userId, options = {}) {
     include: {
       module: {
         include: {
-          course: { select: { courseId: true, instructorId: true } },
+          course: { select: { courseId: true, instructorId: true, contentFlagged: true } },
         },
       },
     },
@@ -38,8 +52,13 @@ async function ensureLessonAccess(lessonId, userId, options = {}) {
   }
 
   const roles = options.roles || [];
-  if (Array.isArray(roles) && roles.includes('admin')) {
+  if (isAdminRole(roles)) {
     return { lesson };
+  }
+
+  const flaggedError = getFlaggedCourseError(lesson.module.course, roles);
+  if (flaggedError) {
+    return { error: flaggedError };
   }
 
   const courseId = lesson.module.course.courseId;
@@ -124,8 +143,13 @@ async function ensureLessonAccessWithCourse(lessonId, userId, options = {}) {
   }
 
   const roles = options.roles || [];
-  if (Array.isArray(roles) && roles.includes('admin')) {
+  if (isAdminRole(roles)) {
     return { lesson };
+  }
+
+  const flaggedError = getFlaggedCourseError(lesson.module.course, roles);
+  if (flaggedError) {
+    return { error: flaggedError };
   }
 
   const courseId = lesson.module.course.courseId;
@@ -168,8 +192,13 @@ async function ensureModuleAccess(moduleId, userId, options = {}) {
   }
 
   const roles = options.roles || [];
-  if (Array.isArray(roles) && roles.includes('admin')) {
+  if (isAdminRole(roles)) {
     return { module };
+  }
+
+  const flaggedError = getFlaggedCourseError(module.course, roles);
+  if (flaggedError) {
+    return { error: flaggedError };
   }
 
   const courseId = module.course.courseId;
@@ -234,6 +263,12 @@ async function ensureCourseAccess(courseId, userId, options = {}) {
     return { error: { status: 404, message: 'Course not found' } };
   }
 
+  const roles = options.roles || [];
+  const flaggedError = getFlaggedCourseError(course, roles);
+  if (flaggedError) {
+    return { error: flaggedError };
+  }
+
   if (requireInstructor) {
     const userIdNum = typeof userId === 'string' ? parseInt(userId, 10) : userId;
     if (course.instructorId !== userIdNum) {
@@ -268,7 +303,7 @@ async function ensureQuizAccess(quizId, userId, options = {}) {
         include: {
           module: {
             include: {
-              course: { select: { courseId: true, instructorId: true } },
+              course: { select: { courseId: true, instructorId: true, contentFlagged: true } },
             },
           },
         },
@@ -281,8 +316,13 @@ async function ensureQuizAccess(quizId, userId, options = {}) {
   }
 
   const roles = options.roles || [];
-  if (Array.isArray(roles) && roles.includes('admin')) {
+  if (isAdminRole(roles)) {
     return { quiz };
+  }
+
+  const flaggedError = getFlaggedCourseError(quiz.lesson.module.course, roles);
+  if (flaggedError) {
+    return { error: flaggedError };
   }
 
   const courseId = quiz.lesson.module.course.courseId;
@@ -469,5 +509,7 @@ module.exports = {
   getQuizForInstructor,
   ensureQuestionOwnership,
   ensureAnswerOwnership,
+  FLAGGED_COURSE_MESSAGE,
+  getFlaggedCourseError,
   sendAccessError,
 };

@@ -30,13 +30,23 @@ function buildLessonProgressState({
   learningProgress,
   resourceProgressMap,
   quizAttempts,
+  assignmentSubmissions,
 }) {
   const lessonResources = Array.isArray(lesson.lessonResources) ? lesson.lessonResources : [];
   const quiz = Array.isArray(lesson.quizzes) && lesson.quizzes.length > 0 ? lesson.quizzes[0] : null;
+  const assignment =
+    Array.isArray(lesson.assignments) && lesson.assignments.length > 0 ? lesson.assignments[0] : null;
+  const latestAssignmentSubmission =
+    Array.isArray(assignmentSubmissions) && assignmentSubmissions.length > 0
+      ? [...assignmentSubmissions].sort(
+          (left, right) => new Date(right.submittedAt).getTime() - new Date(left.submittedAt).getTime()
+        )[0]
+      : null;
 
   const hasContentRequirement = Boolean((lesson.contentText || '').trim());
   const hasPrimaryVideoRequirement = Boolean(lesson.mediaUrl);
   const hasQuizRequirement = Boolean(quiz);
+  const hasAssignmentRequirement = Boolean(assignment);
 
   const resourceItems = lessonResources.map((resource) => {
     const progress = resourceProgressMap.get(resource.resourceId) || null;
@@ -78,6 +88,9 @@ function buildLessonProgressState({
   if (hasQuizRequirement) {
     requirements.push(passedQuiz);
   }
+  if (hasAssignmentRequirement) {
+    requirements.push(Boolean(latestAssignmentSubmission));
+  }
 
   const hasTrackedRequirements = requirements.length > 0;
   const hasAnyActivity =
@@ -87,7 +100,8 @@ function buildLessonProgressState({
     Boolean(learningProgress?.videoCompletedAt) ||
     Number(learningProgress?.lastWatchedSecond || 0) > 0 ||
     resourceItems.some((item) => item.status !== PROGRESS_STATUS_NOT_STARTED) ||
-    (quizAttempts || []).length > 0;
+    (quizAttempts || []).length > 0 ||
+    Boolean(latestAssignmentSubmission);
 
   let status = PROGRESS_STATUS_NOT_STARTED;
   if (hasTrackedRequirements) {
@@ -120,6 +134,7 @@ function buildLessonProgressState({
       hasContentRequirement,
       hasPrimaryVideoRequirement,
       hasQuizRequirement,
+      hasAssignmentRequirement,
       totalResources: resourceItems.length,
       completedResources: resourceItems.filter((item) => item.status === PROGRESS_STATUS_COMPLETED).length,
       quizPassed: passedQuiz,
@@ -136,6 +151,23 @@ function buildLessonProgressState({
             (quizAttempts || []).reduce((max, attempt) => Math.max(max, Number(attempt.totalScore || 0)), 0),
         }
       : null,
+    assignment: assignment
+      ? {
+          assignmentId: assignment.assignmentId,
+          title: assignment.title || lesson.title,
+          instructions: assignment.instructions || '',
+          submitted: Boolean(latestAssignmentSubmission),
+          latestSubmission: latestAssignmentSubmission
+            ? {
+                submissionId: latestAssignmentSubmission.submissionId,
+                submittedAt: latestAssignmentSubmission.submittedAt,
+                grade: latestAssignmentSubmission.grade,
+                feedback: latestAssignmentSubmission.feedback,
+                status: latestAssignmentSubmission.grade == null ? 'pending' : 'graded',
+              }
+            : null,
+        }
+      : null,
   };
 }
 
@@ -145,6 +177,7 @@ function buildEnrollmentProgressSnapshot({
   learningProgressRecords,
   resourceProgressRecords,
   quizAttempts,
+  assignmentSubmissions,
 }) {
   const learningProgressMap = new Map(
     (learningProgressRecords || []).map((record) => [record.lessonId, record])
@@ -158,6 +191,12 @@ function buildEnrollmentProgressSnapshot({
     list.push(attempt);
     attemptsByQuizId.set(attempt.quizId, list);
   });
+  const submissionsByAssignmentId = new Map();
+  (assignmentSubmissions || []).forEach((submission) => {
+    const list = submissionsByAssignmentId.get(submission.assignmentId) || [];
+    list.push(submission);
+    submissionsByAssignmentId.set(submission.assignmentId, list);
+  });
 
   const orderedModules = [...(course.modules || [])].sort((a, b) => (a.orderIndex || 0) - (b.orderIndex || 0));
   const modules = orderedModules.map((module) => {
@@ -169,6 +208,7 @@ function buildEnrollmentProgressSnapshot({
         learningProgress,
         resourceProgressMap,
         quizAttempts: attemptsByQuizId.get(lesson.quizzes?.[0]?.quizId) || [],
+        assignmentSubmissions: submissionsByAssignmentId.get(lesson.assignments?.[0]?.assignmentId) || [],
       });
 
       return {
@@ -184,6 +224,7 @@ function buildEnrollmentProgressSnapshot({
         requirements: lessonState.requirements,
         resources: lessonState.resources,
         quiz: lessonState.quiz,
+        assignment: lessonState.assignment,
       };
     });
 

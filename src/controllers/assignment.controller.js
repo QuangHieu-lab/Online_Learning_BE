@@ -1,0 +1,328 @@
+const prisma = require('../utils/prisma');
+const {
+  ensureLessonAccessWithCourse,
+  getLessonForInstructor,
+  sendAccessError,
+} = require('../utils/access.helpers');
+
+function toInt(value) {
+  return typeof value === 'string' ? Number.parseInt(value, 10) : value;
+}
+
+function mapSubmission(submission) {
+  return {
+    submissionId: submission.submissionId,
+    assignmentId: submission.assignmentId,
+    enrollmentId: submission.enrollmentId,
+    contentText: submission.contentText,
+    fileUrl: submission.fileUrl,
+    grade: submission.grade,
+    feedback: submission.feedback,
+    gradedBy: submission.gradedBy,
+    submittedAt: submission.submittedAt,
+    status: submission.grade == null ? 'pending' : 'graded',
+    student: submission.enrollment?.user
+      ? {
+          userId: submission.enrollment.user.userId,
+          fullName: submission.enrollment.user.fullName,
+          email: submission.enrollment.user.email,
+        }
+      : null,
+  };
+}
+
+async function loadAssignmentLesson(lessonId) {
+  return prisma.lesson.findUnique({
+    where: { lessonId: toInt(lessonId) },
+    include: {
+      module: {
+        include: {
+          course: true,
+        },
+      },
+      assignments: true,
+    },
+  });
+}
+
+async function getAssignmentByLesson(req, res) {
+  try {
+    const { lessonId } = req.params;
+    const userId = req.userId;
+
+    const access = await ensureLessonAccessWithCourse(lessonId, userId, { roles: req.userRoles || [] });
+    if (access.error) {
+      return sendAccessError(res, access.error);
+    }
+
+    const lesson = await loadAssignmentLesson(lessonId);
+    if (!lesson) {
+      return res.status(404).json({ error: 'Lesson not found' });
+    }
+
+    const assignment = lesson.assignments?.[0];
+    if (!assignment) {
+      return res.status(404).json({ error: 'Assignment not found for this lesson' });
+    }
+
+    const userIdInt = toInt(userId);
+    const enrollment = await prisma.enrollment.findUnique({
+      where: {
+        userId_courseId: {
+          userId: userIdInt,
+          courseId: lesson.module.course.courseId,
+        },
+      },
+    });
+
+    let latestSubmission = null;
+    if (enrollment) {
+      latestSubmission = await prisma.assignmentSubmission.findFirst({
+        where: {
+          assignmentId: assignment.assignmentId,
+          enrollmentId: enrollment.enrollmentId,
+        },
+        orderBy: {
+          submittedAt: 'desc',
+        },
+      });
+    }
+
+    return res.json({
+      assignment: {
+        assignmentId: assignment.assignmentId,
+        lessonId: lesson.lessonId,
+        lessonTitle: lesson.title,
+        title: assignment.title || lesson.title,
+        instructions: assignment.instructions || '',
+      },
+      latestSubmission: latestSubmission ? mapSubmission(latestSubmission) : null,
+    });
+  } catch (error) {
+    console.error('Get assignment by lesson error:', error);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+}
+
+async function submitAssignment(req, res) {
+  try {
+    const { lessonId } = req.params;
+    const userId = req.userId;
+    const { contentText, fileUrl } = req.body;
+
+    const access = await ensureLessonAccessWithCourse(lessonId, userId, { roles: req.userRoles || [] });
+    if (access.error) {
+      return sendAccessError(res, access.error);
+    }
+
+    const lesson = await loadAssignmentLesson(lessonId);
+    if (!lesson) {
+      return res.status(404).json({ error: 'Lesson not found' });
+    }
+
+    if (lesson.module.course.instructorId === toInt(userId)) {
+      return res.status(403).json({ error: 'Instructors cannot submit their own assignment' });
+    }
+
+    const assignment = lesson.assignments?.[0];
+    if (!assignment) {
+      return res.status(404).json({ error: 'Assignment not found for this lesson' });
+    }
+
+    if (!String(contentText || '').trim() && !String(fileUrl || '').trim()) {
+      return res.status(400).json({ error: 'Assignment text or file URL is required' });
+    }
+
+    const enrollment = await prisma.enrollment.findUnique({
+      where: {
+        userId_courseId: {
+          userId: toInt(userId),
+          courseId: lesson.module.course.courseId,
+        },
+      },
+    });
+
+    if (!enrollment) {
+      return res.status(403).json({ error: 'You must be enrolled to submit this assignment' });
+    }
+
+    const submission = await prisma.assignmentSubmission.create({
+      data: {
+        assignmentId: assignment.assignmentId,
+        enrollmentId: enrollment.enrollmentId,
+        contentText: String(contentText || '').trim() || null,
+        fileUrl: String(fileUrl || '').trim() || null,
+      },
+      include: {
+        enrollment: {
+          include: {
+            user: {
+              select: {
+                userId: true,
+                fullName: true,
+                email: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    return res.status(201).json({
+      message: 'Assignment submitted successfully',
+      submission: mapSubmission(submission),
+    });
+  } catch (error) {
+    console.error('Submit assignment error:', error);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+}
+
+async function listLessonSubmissions(req, res) {
+  try {
+    const { lessonId } = req.params;
+    const userId = req.userId;
+
+    const access = await getLessonForInstructor(lessonId, userId);
+    if (access.error) {
+      return sendAccessError(res, access.error);
+    }
+
+    const lesson = await loadAssignmentLesson(lessonId);
+    if (!lesson) {
+      return res.status(404).json({ error: 'Lesson not found' });
+    }
+
+    const assignment = lesson.assignments?.[0];
+    if (!assignment) {
+      return res.status(404).json({ error: 'Assignment not found for this lesson' });
+    }
+
+    const submissions = await prisma.assignmentSubmission.findMany({
+      where: {
+        assignmentId: assignment.assignmentId,
+      },
+      orderBy: {
+        submittedAt: 'desc',
+      },
+      include: {
+        enrollment: {
+          include: {
+            user: {
+              select: {
+                userId: true,
+                fullName: true,
+                email: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    return res.json({
+      assignment: {
+        assignmentId: assignment.assignmentId,
+        lessonId: lesson.lessonId,
+        lessonTitle: lesson.title,
+        title: assignment.title || lesson.title,
+        instructions: assignment.instructions || '',
+      },
+      submissions: submissions.map(mapSubmission),
+    });
+  } catch (error) {
+    console.error('List assignment submissions error:', error);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+}
+
+async function gradeSubmission(req, res) {
+  try {
+    const { submissionId } = req.params;
+    const { grade, feedback } = req.body;
+    const userId = req.userId;
+    const submissionIdInt = toInt(submissionId);
+
+    if (Number.isNaN(submissionIdInt)) {
+      return res.status(400).json({ error: 'Invalid submission ID' });
+    }
+
+    if (grade === undefined || grade === null || Number.isNaN(Number(grade))) {
+      return res.status(400).json({ error: 'A numeric grade is required' });
+    }
+
+    const submission = await prisma.assignmentSubmission.findUnique({
+      where: { submissionId: submissionIdInt },
+      include: {
+        assignment: {
+          include: {
+            lesson: {
+              include: {
+                module: {
+                  include: {
+                    course: true,
+                  },
+                },
+              },
+            },
+          },
+        },
+        enrollment: {
+          include: {
+            user: {
+              select: {
+                userId: true,
+                fullName: true,
+                email: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    if (!submission) {
+      return res.status(404).json({ error: 'Submission not found' });
+    }
+
+    if (submission.assignment.lesson.module.course.instructorId !== toInt(userId)) {
+      return res.status(403).json({ error: 'Not authorized' });
+    }
+
+    const updatedSubmission = await prisma.assignmentSubmission.update({
+      where: { submissionId: submissionIdInt },
+      data: {
+        grade: Number(grade),
+        feedback: String(feedback || '').trim() || null,
+      },
+      include: {
+        enrollment: {
+          include: {
+            user: {
+              select: {
+                userId: true,
+                fullName: true,
+                email: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    return res.json({
+      message: 'Submission graded successfully',
+      submission: mapSubmission(updatedSubmission),
+    });
+  } catch (error) {
+    console.error('Grade assignment submission error:', error);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+}
+
+module.exports = {
+  getAssignmentByLesson,
+  submitAssignment,
+  listLessonSubmissions,
+  gradeSubmission,
+};

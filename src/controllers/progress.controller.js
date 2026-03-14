@@ -12,7 +12,11 @@ const {
   buildEnrollmentProgressSnapshot,
   normalizeProgressStatus,
 } = require('../utils/progress.utils');
-const { getCourseForInstructor } = require('../utils/access.helpers');
+const {
+  FLAGGED_COURSE_MESSAGE,
+  getCourseForInstructor,
+  getFlaggedCourseError,
+} = require('../utils/access.helpers');
 
 function toInt(value) {
   return typeof value === 'string' ? parseInt(value, 10) : value;
@@ -41,6 +45,11 @@ async function getLessonContext(userId, lessonId) {
 
   if (!lesson) {
     return { error: { status: 404, message: 'Lesson not found' } };
+  }
+
+  const flaggedError = getFlaggedCourseError(lesson.module.course);
+  if (flaggedError) {
+    return { error: flaggedError };
   }
 
   const userIdInt = toInt(userId);
@@ -85,6 +94,11 @@ async function getResourceContext(userId, resourceId) {
     return { error: { status: 404, message: 'Resource not found' } };
   }
 
+  const flaggedError = getFlaggedCourseError(resource.lesson.module.course);
+  if (flaggedError) {
+    return { error: flaggedError };
+  }
+
   const userIdInt = toInt(userId);
   const enrollment = await prisma.enrollment.findUnique({
     where: {
@@ -116,6 +130,13 @@ async function loadCourseProgressSnapshot(enrollment, courseId) {
               quizzes: {
                 select: { quizId: true, title: true, passingScore: true },
               },
+              assignments: {
+                select: {
+                  assignmentId: true,
+                  title: true,
+                  instructions: true,
+                },
+              },
             },
           },
         },
@@ -134,8 +155,11 @@ async function loadCourseProgressSnapshot(enrollment, courseId) {
   const quizIds = course.modules.flatMap((module) =>
     module.lessons.flatMap((lesson) => lesson.quizzes.map((quiz) => quiz.quizId))
   );
+  const assignmentIds = course.modules.flatMap((module) =>
+    module.lessons.flatMap((lesson) => lesson.assignments.map((assignment) => assignment.assignmentId))
+  );
 
-  const [learningProgressRecords, resourceProgressRecords, quizAttempts] = await Promise.all([
+  const [learningProgressRecords, resourceProgressRecords, quizAttempts, assignmentSubmissions] = await Promise.all([
     prisma.learningProgress.findMany({
       where: {
         enrollmentId: enrollment.enrollmentId,
@@ -155,6 +179,13 @@ async function loadCourseProgressSnapshot(enrollment, courseId) {
       },
       orderBy: { completedAt: 'desc' },
     }),
+    prisma.assignmentSubmission.findMany({
+      where: {
+        enrollmentId: enrollment.enrollmentId,
+        assignmentId: { in: assignmentIds.length > 0 ? assignmentIds : [-1] },
+      },
+      orderBy: { submittedAt: 'desc' },
+    }),
   ]);
 
   return buildEnrollmentProgressSnapshot({
@@ -163,6 +194,7 @@ async function loadCourseProgressSnapshot(enrollment, courseId) {
     learningProgressRecords,
     resourceProgressRecords,
     quizAttempts,
+    assignmentSubmissions,
   });
 }
 
@@ -550,6 +582,14 @@ const getProgress = async (req, res) => {
     const snapshot = await loadCourseProgressSnapshot(enrollment, courseIdInt);
     if (!snapshot) {
       return res.status(404).json({ error: 'Course not found' });
+    }
+
+    const course = await prisma.course.findUnique({
+      where: { courseId: courseIdInt },
+      select: { contentFlagged: true },
+    });
+    if (getFlaggedCourseError(course)) {
+      return res.status(403).json({ error: FLAGGED_COURSE_MESSAGE });
     }
 
     res.json(snapshot);

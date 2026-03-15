@@ -387,6 +387,85 @@ const getCourseModules = async (req, res) => {
   }
 };
 
+const updateModule = async (req, res) => {
+  try {
+    const { courseId, moduleId } = req.params;
+    const userId = req.userId;
+    const { title, description, orderIndex } = req.body;
+
+    const courseIdInt = Number.parseInt(courseId, 10);
+    const moduleIdInt = Number.parseInt(moduleId, 10);
+    if (Number.isNaN(courseIdInt) || Number.isNaN(moduleIdInt)) {
+      return res.status(400).json({ error: 'Invalid course or module ID' });
+    }
+
+    const access = await getCourseForInstructor(courseIdInt, userId);
+    if (access.error) {
+      return sendAccessError(res, access.error);
+    }
+
+    const module = await prisma.module.findFirst({
+      where: { moduleId: moduleIdInt, courseId: courseIdInt },
+    });
+    if (!module) {
+      return res.status(404).json({ error: 'Module not found' });
+    }
+
+    const updateData = {};
+    if (typeof title === 'string' && title.trim()) updateData.title = title.trim();
+    if (description !== undefined) updateData.description = description && typeof description === 'string' ? description.trim() : null;
+    if (typeof orderIndex === 'number' && !Number.isNaN(orderIndex)) updateData.orderIndex = orderIndex;
+
+    if (Object.keys(updateData).length === 0) {
+      return res.status(400).json({ error: 'No valid fields to update' });
+    }
+
+    const updated = await prisma.module.update({
+      where: { moduleId: moduleIdInt },
+      data: updateData,
+      include: { _count: { select: { lessons: true } } },
+    });
+    res.json(updated);
+  } catch (error) {
+    console.error('Update module error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+};
+
+const deleteModule = async (req, res) => {
+  try {
+    const { courseId, moduleId } = req.params;
+    const userId = req.userId;
+
+    const courseIdInt = Number.parseInt(courseId, 10);
+    const moduleIdInt = Number.parseInt(moduleId, 10);
+    if (Number.isNaN(courseIdInt) || Number.isNaN(moduleIdInt)) {
+      return res.status(400).json({ error: 'Invalid course or module ID' });
+    }
+
+    const access = await getCourseForInstructor(courseIdInt, userId);
+    if (access.error) {
+      return sendAccessError(res, access.error);
+    }
+
+    const module = await prisma.module.findFirst({
+      where: { moduleId: moduleIdInt, courseId: courseIdInt },
+      include: { _count: { select: { lessons: true } } },
+    });
+    if (!module) {
+      return res.status(404).json({ error: 'Module not found' });
+    }
+
+    await prisma.module.delete({
+      where: { moduleId: moduleIdInt },
+    });
+    res.json({ message: 'Module deleted successfully' });
+  } catch (error) {
+    console.error('Delete module error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+};
+
 const deleteCourse = async (req, res) => {
   try {
     const { courseId } = req.params;
@@ -1054,6 +1133,8 @@ module.exports = {
   deleteCourse,
   createModule,
   getCourseModules,
+  updateModule,
+  deleteModule,
   enrollInCourse,
   getCoursesByStudentId,
   submitCourseForReview,

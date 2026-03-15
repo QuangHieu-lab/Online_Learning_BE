@@ -7,6 +7,8 @@ const {
   deleteCourse,
   createModule,
   getCourseModules,
+  updateModule,
+  deleteModule,
   enrollInCourse,
   getCoursesByStudentId,
   submitCourseForReview,
@@ -45,6 +47,8 @@ router.post('/:courseId/thumbnail', authenticate, requireLecturer, uploadThumbna
 
 // Generic course routes (/:courseId/modules must be before /:courseId)
 router.get('/:courseId/modules', authenticate, getCourseModules);
+router.put('/:courseId/modules/:moduleId', authenticate, requireLecturer, updateModule);
+router.delete('/:courseId/modules/:moduleId', authenticate, requireLecturer, deleteModule);
 router.get('/:courseId', optionalAuthenticate, getCourseById);
 router.put('/:courseId', authenticate, requireLecturer, updateCourse);
 router.delete('/:courseId', authenticate, requireLecturer, deleteCourse);

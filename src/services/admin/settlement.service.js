@@ -8,6 +8,19 @@
 
 const prisma = require('../../utils/prisma');
 
+function mapBankAccountInfo(profile) {
+  const bankInfo =
+    profile?.bankAccountInfo && typeof profile.bankAccountInfo === 'object'
+      ? profile.bankAccountInfo
+      : {};
+
+  return {
+    bankName: bankInfo.bankName || '',
+    accountNumber: bankInfo.accountNumber || '',
+    accountName: bankInfo.accountName || '',
+  };
+}
+
 /**
  * Generate monthly settlement batches for all instructors with unsettled earnings
  * 
@@ -217,7 +230,7 @@ async function getAllSettlements({ status = null, month = null, instructorId = n
       fullName: true,
       email: true,
       instructorProfile: {
-        select: { bankName: true, bankAccountNumber: true, paypalEmail: true },
+        select: { bankAccountInfo: true },
       },
     },
   });
@@ -412,7 +425,7 @@ async function exportSettlementsCSV({ status = null, month = null } = {}) {
       fullName: true,
       email: true,
       instructorProfile: {
-        select: { bankName: true, bankAccountNumber: true },
+        select: { bankAccountInfo: true },
       },
     },
   });
@@ -438,13 +451,14 @@ async function exportSettlementsCSV({ status = null, month = null } = {}) {
 
   const rows = batches.map(b => {
     const instructor = instructorMap.get(b.instructorId);
+    const bankInfo = mapBankAccountInfo(instructor?.instructorProfile);
     return [
       b.batchId,
       b.instructorId,
       instructor?.fullName || '',
       instructor?.email || '',
-      instructor?.instructorProfile?.bankName || '',
-      instructor?.instructorProfile?.bankAccountNumber || '',
+      bankInfo.bankName,
+      bankInfo.accountNumber,
       b.month,
       b.totalGross,
       b.totalPlatformFee,

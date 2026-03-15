@@ -14,22 +14,39 @@ const createLesson = async (req, res) => {
     const { module } = access;
     const moduleIdInt = module.moduleId;
 
-    const lesson = await prisma.lesson.create({
-      data: {
-        moduleId: moduleIdInt,
-        title,
-        type: type || 'video',
-        mediaUrl,
-        orderIndex: orderIndex || 0,
-        ...(contentText !== undefined && { contentText }),
-      },
-      include: {
-        module: {
-          include: {
-            course: true,
-          },
+    const lesson = await prisma.$transaction(async (tx) => {
+      const createdLesson = await tx.lesson.create({
+        data: {
+          moduleId: moduleIdInt,
+          title,
+          type: type || 'video',
+          mediaUrl,
+          orderIndex: orderIndex || 0,
+          ...(contentText !== undefined && { contentText }),
         },
-      },
+      });
+
+      if ((type || 'video') === 'assignment') {
+        await tx.assignment.create({
+          data: {
+            lessonId: createdLesson.lessonId,
+            title: title?.trim() || 'Assignment',
+            instructions: contentText?.trim() || `Submit your work for ${title?.trim() || 'this assignment'}.`,
+          },
+        });
+      }
+
+      return tx.lesson.findUnique({
+        where: { lessonId: createdLesson.lessonId },
+        include: {
+          module: {
+            include: {
+              course: true,
+            },
+          },
+          assignments: true,
+        },
+      });
     });
 
     res.status(201).json(lesson);
@@ -107,6 +124,13 @@ const getLessonById = async (req, res) => {
             passingScore: true,
           },
         },
+        assignments: {
+          select: {
+            assignmentId: true,
+            title: true,
+            instructions: true,
+          },
+        },
         lessonResources: true,
       },
     });
@@ -138,16 +162,46 @@ const updateLesson = async (req, res) => {
     if (orderIndex !== undefined) updateData.orderIndex = orderIndex;
     if (contentText !== undefined) updateData.contentText = contentText;
 
-    const updatedLesson = await prisma.lesson.update({
-      where: { lessonId: lessonIdInt },
-      data: updateData,
-      include: {
-        module: {
-          include: {
-            course: true,
+    const updatedLesson = await prisma.$transaction(async (tx) => {
+      const savedLesson = await tx.lesson.update({
+        where: { lessonId: lessonIdInt },
+        data: updateData,
+      });
+
+      const nextType = type !== undefined ? type : lesson.type;
+      const nextTitle = title !== undefined ? title : lesson.title;
+      const nextInstructions = contentText !== undefined ? contentText : lesson.contentText;
+
+      if (nextType === 'assignment') {
+        await tx.assignment.upsert({
+          where: { lessonId: lessonIdInt },
+          update: {
+            title: nextTitle?.trim() || 'Assignment',
+            instructions: nextInstructions?.trim() || `Submit your work for ${nextTitle?.trim() || 'this assignment'}.`,
           },
+          create: {
+            lessonId: lessonIdInt,
+            title: nextTitle?.trim() || 'Assignment',
+            instructions: nextInstructions?.trim() || `Submit your work for ${nextTitle?.trim() || 'this assignment'}.`,
+          },
+        });
+      } else {
+        await tx.assignment.deleteMany({
+          where: { lessonId: lessonIdInt },
+        });
+      }
+
+      return tx.lesson.findUnique({
+        where: { lessonId: savedLesson.lessonId },
+        include: {
+          module: {
+            include: {
+              course: true,
+            },
+          },
+          assignments: true,
         },
-      },
+      });
     });
 
     res.json(updatedLesson);

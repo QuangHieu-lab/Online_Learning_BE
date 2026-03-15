@@ -6,6 +6,7 @@ const {
   deleteFileFromFirebase,
 } = require('../services/firebase-storage.service');
 const { ENROLLMENT_STATUS_ACTIVE, ENROLLMENT_STATUS_COMPLETED } = require('../config/constants');
+const { FLAGGED_COURSE_MESSAGE, getFlaggedCourseError } = require('../utils/access.helpers');
 
 // Video controller uses LessonResource model (resourceId = videoId in routes)
 const uploadVideo = async (req, res) => {
@@ -111,7 +112,7 @@ async function checkVideoAccess(prisma, userId, resourceIdInt, existingLessonRes
         lesson: {
           include: {
             module: {
-              include: { course: { select: { courseId: true, instructorId: true } } },
+              include: { course: { select: { courseId: true, instructorId: true, contentFlagged: true } } },
             },
           },
         },
@@ -119,6 +120,8 @@ async function checkVideoAccess(prisma, userId, resourceIdInt, existingLessonRes
     }));
   if (!lessonResource || lessonResource.fileType !== 'video') return { allowed: false, notFound: true };
   if (Array.isArray(roles) && roles.includes('admin')) return { allowed: true };
+  const flaggedError = getFlaggedCourseError(lessonResource.lesson.module.course, roles);
+  if (flaggedError) return { allowed: false, flagged: true };
   const courseId = lessonResource.lesson.module.course.courseId;
   const instructorId = lessonResource.lesson.module.course.instructorId;
   const userIdNum = typeof userId === 'string' ? parseInt(userId, 10) : userId;
@@ -164,6 +167,7 @@ const getVideo = async (req, res) => {
 
     const access = await checkVideoAccess(prisma, userId, resourceIdInt, lessonResource, req.userRoles || []);
     if (access.notFound) return res.status(404).json({ error: 'Video not found' });
+    if (access.flagged) return res.status(403).json({ error: FLAGGED_COURSE_MESSAGE });
     if (!access.allowed) return res.status(403).json({ error: 'Not authorized to access this video' });
 
     res.json({
@@ -192,6 +196,7 @@ const resourceIdInt = parseInt(videoId);
 
     const access = await checkVideoAccess(prisma, userId, resourceIdInt, null, req.userRoles || []);
     if (access.notFound) return res.status(404).json({ error: 'Video not found' });
+    if (access.flagged) return res.status(403).json({ error: FLAGGED_COURSE_MESSAGE });
     if (!access.allowed) return res.status(403).json({ error: 'Not authorized to access this video' });
 
     const lessonResource = await prisma.lessonResource.findUnique({
@@ -217,6 +222,7 @@ const downloadVideo = async (req, res) => {
 
     const access = await checkVideoAccess(prisma, userId, resourceIdInt, null, req.userRoles || []);
     if (access.notFound) return res.status(404).json({ error: 'Video not found' });
+    if (access.flagged) return res.status(403).json({ error: FLAGGED_COURSE_MESSAGE });
     if (!access.allowed) return res.status(403).json({ error: 'Not authorized to access this video' });
 
     const lessonResource = await prisma.lessonResource.findUnique({

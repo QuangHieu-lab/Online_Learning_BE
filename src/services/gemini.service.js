@@ -130,6 +130,65 @@ function filterValidQuestions(normalized) {
   return normalized.filter((q) => q.content.length > 0 && q.answers.length >= 2);
 }
 
+function safeJsonParse(text) {
+  if (!text) return null;
+  const jsonMatch = text.match(/\{[\s\S]*\}/);
+  if (!jsonMatch) return null;
+  try {
+    return JSON.parse(jsonMatch[0]);
+  } catch {
+    return null;
+  }
+}
+
+function estimateTokensFromText(text = '') {
+  const normalized = String(text || '').trim();
+  if (!normalized) return 0;
+  return Math.max(1, Math.ceil(normalized.length / 4));
+}
+
+function getUsageMetadataTotalTokens(response, fallbackText = '') {
+  const usage = response?.usageMetadata;
+  const total =
+    usage?.totalTokenCount ||
+    ((usage?.promptTokenCount || 0) + (usage?.candidatesTokenCount || 0));
+  if (Number.isFinite(total) && total > 0) {
+    return total;
+  }
+  return estimateTokensFromText(fallbackText);
+}
+
+function normalizeHistory(history = []) {
+  if (!Array.isArray(history)) return [];
+  return history
+    .filter((item) => item && typeof item.content === 'string' && typeof item.role === 'string')
+    .map((item) => ({
+      role: item.role === 'assistant' ? 'assistant' : 'user',
+      content: item.content.trim(),
+    }))
+    .filter((item) => item.content.length > 0)
+    .slice(-6);
+}
+
+function isObviouslyOffTopic(question = '') {
+  const normalized = String(question || '').toLowerCase();
+  const offTopicPatterns = [
+    /\bweather\b/,
+    /\bnhi[eê]t độ\b/,
+    /\bthời tiết\b/,
+    /\bfootball\b/,
+    /\bsoccer\b/,
+    /\bbitcoin\b/,
+    /\bcrypto\b/,
+    /\bstock market\b/,
+    /\bmovie\b/,
+    /\bphim\b/,
+    /\bcelebrity\b/,
+    /\bgossip\b/,
+  ];
+  return offTopicPatterns.some((pattern) => pattern.test(normalized));
+}
+
 const generateQuizFromContent = async (content, numQuestions = 5, existingQuestionTexts = []) => {
   try {
     const excludeBlock =
@@ -183,22 +242,48 @@ ${content}`;
   }
 };
 
-const getAITutorResponse = async (question, lessonContent) => {
+const getAITutorResponse = async (question, lessonContent, options = {}) => {
   try {
+    const trimmedQuestion = String(question || '').trim();
+    const normalizedHistory = normalizeHistory(options.history);
+
+    if (isObviouslyOffTopic(trimmedQuestion)) {
+      return {
+        answer: '',
+        refusalReason:
+          'I am an English learning assistant. Please ask questions related to the current lesson.',
+        tokensUsed: 0,
+      };
+    }
+
     return await tryModels(async (modelName) => {
       const model = genAI.getGenerativeModel({ model: modelName });
       const isQuizQuestion =
-        question.includes('Câu hỏi:') || question.includes('Question:') || /^[A-D]\./.test(question);
+        trimmedQuestion.includes('Câu hỏi:') ||
+        trimmedQuestion.includes('Question:') ||
+        /^[A-D]\./.test(trimmedQuestion);
+      const historyBlock = normalizedHistory.length > 0
+        ? `\nRecent conversation history:\n${normalizedHistory
+            .map((item) => `${item.role === 'assistant' ? 'Tutor' : 'Student'}: ${item.content}`)
+            .join('\n')}\n`
+        : '';
 
-      let prompt = `You are an AI tutor helping a student. Your goal is to help them learn, not just give answers.
+      let prompt = `You are an AI tutor helping a student with the CURRENT lesson only.
 
-IMPORTANT GUIDELINES:
-1. If the student asks about a quiz question, guide them through the problem-solving process
-2. Explain concepts clearly with examples
-3. Use step-by-step reasoning
-4. For math problems, show your work
-5. Encourage critical thinking
-6. If they ask for the answer directly, guide them to find it themselves first`;
+Return a single JSON object with exactly these keys:
+{
+  "answer": "string",
+  "refusalReason": "string or null"
+}
+
+STRICT RULES:
+1. Only answer questions that are clearly related to the current lesson content or its quiz/resources.
+2. If the question is off-topic, return:
+   - "answer": ""
+   - "refusalReason": "I am an English learning assistant. Please ask questions related to the current lesson."
+3. If the student asks for a direct quiz answer, guide them instead of giving the final answer immediately.
+4. Keep the answer educational, concise, and focused on the lesson.
+5. Do not include any markdown fences or extra text outside the JSON object.`;
 
       if (isQuizQuestion) {
         prompt += `\n\nThis appears to be a quiz question. Help the student understand:
@@ -213,11 +298,32 @@ DO NOT give the direct answer immediately. Guide them to discover it.`;
         prompt += `\n\nUse the following lesson content as context:\n${lessonContent}\n\n`;
       }
 
-      prompt += `\nStudent's question:\n${question}\n\nProvide a helpful, educational response that promotes learning.`;
+      if (historyBlock) {
+        prompt += historyBlock;
+      }
+
+      prompt += `\nStudent's question:\n${trimmedQuestion}\n\nReturn the JSON object now.`;
 
       const result = await model.generateContent(prompt);
       const response = await result.response;
-      return response.text();
+      const text = response.text();
+      const parsed = safeJsonParse(text);
+
+      if (parsed && typeof parsed === 'object') {
+        return {
+          answer: String(parsed.answer || '').trim(),
+          refusalReason: parsed.refusalReason ? String(parsed.refusalReason).trim() : null,
+          tokensUsed: getUsageMetadataTotalTokens(response, text),
+          modelName,
+        };
+      }
+
+      return {
+        answer: text.trim(),
+        refusalReason: null,
+        tokensUsed: getUsageMetadataTotalTokens(response, text),
+        modelName,
+      };
     });
   } catch (error) {
     console.error('Lỗi chi tiết:', error);
@@ -399,10 +505,50 @@ const analyzeKnowledgeGaps = async (submissions, lessonContent) => {
   }
 };
 
+const analyzeSpeakingTranscript = async (transcriptText, referenceText = '') => {
+  const normalized = String(transcriptText || '').trim();
+  const words = normalized.split(/\s+/).filter(Boolean);
+
+  if (words.length < 3) {
+    const silenceError = new Error('Voice not recognized, please try again in a quiet environment.');
+    silenceError.statusCode = 400;
+    throw silenceError;
+  }
+
+  const normalizedReference = String(referenceText || '').toLowerCase();
+  const fillerWords = ['um', 'uh', 'like', 'you know'];
+  const repeatedFillers = fillerWords.filter((word) => new RegExp(`\\b${word}\\b`, 'i').test(normalized));
+  const overlapCount = normalizedReference
+    ? words.filter((word) => normalizedReference.includes(word.toLowerCase())).length
+    : 0;
+  const overlapRatio = words.length > 0 ? overlapCount / words.length : 0;
+  const pronunciationScore = Math.min(100, Math.max(60, Math.round(68 + overlapRatio * 20 - repeatedFillers.length * 4)));
+  const fluencyScore = Math.min(100, Math.max(58, Math.round(64 + Math.min(words.length, 25) - repeatedFillers.length * 5)));
+  const errorsDetected = [];
+
+  if (!/[.!?]$/.test(normalized)) {
+    errorsDetected.push('Try finishing the sentence with a clear ending pause.');
+  }
+  if (repeatedFillers.length > 0) {
+    errorsDetected.push(`Reduce filler words such as ${repeatedFillers.join(', ')}.`);
+  }
+  if (overlapRatio < 0.25 && normalizedReference) {
+    errorsDetected.push('Use more vocabulary from the speaking prompt or cue cards.');
+  }
+
+  return {
+    transcriptText: normalized,
+    pronunciationScore,
+    fluencyScore,
+    errorsDetected,
+  };
+};
+
 module.exports = {
   generateQuizFromContent,
   getAITutorResponse,
   getStructuredTutorResponse,
   getAIHint,
   analyzeKnowledgeGaps,
+  analyzeSpeakingTranscript,
 };

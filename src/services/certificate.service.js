@@ -1,11 +1,51 @@
-const crypto = require('crypto');
+const fs = require('node:fs');
+const crypto = require('node:crypto');
 const prisma = require('../utils/prisma');
 const { PROGRESS_STATUS_COMPLETED, ENROLLMENT_STATUS_COMPLETED } = require('../config/constants');
+const {
+  generateCertificatePdf,
+  getCertificatePdfAbsolutePath,
+  getCertificateViewPath,
+} = require('./certificate-pdf.service');
 
 function computeGradeFromAttempts(attempts) {
-  if (!attempts || attempts.length === 0) return 0;
+  if (!attempts || attempts.length === 0) return 100;
   const total = attempts.reduce((sum, a) => sum + Number(a.totalScore || 0), 0);
   return total / attempts.length;
+}
+
+async function ensureCertificatePdfForRecord(certificate, details) {
+  const expectedPdfUrl = getCertificateViewPath(certificate.certificateId);
+  const pdfPath = getCertificatePdfAbsolutePath(certificate.serialNumber);
+
+  if (!certificate.pdfUrl || certificate.pdfUrl !== expectedPdfUrl) {
+    await generateCertificatePdf({
+      serialNumber: certificate.serialNumber,
+      studentName: details.studentName,
+      courseTitle: details.courseTitle,
+      instructorName: details.instructorName,
+      issuedAt: certificate.issuedAt,
+      grade: details.grade,
+    });
+
+    return prisma.certificate.update({
+      where: { certificateId: certificate.certificateId },
+      data: { pdfUrl: expectedPdfUrl },
+    });
+  }
+
+  if (!fs.existsSync(pdfPath)) {
+    await generateCertificatePdf({
+      serialNumber: certificate.serialNumber,
+      studentName: details.studentName,
+      courseTitle: details.courseTitle,
+      instructorName: details.instructorName,
+      issuedAt: certificate.issuedAt,
+      grade: details.grade,
+    });
+  }
+
+  return certificate;
 }
 
 /**
@@ -18,9 +58,19 @@ async function ensureCertificateIssuedIfEligible(userId, courseId) {
       where: { userId_courseId: { userId, courseId } },
       include: {
         learningProgress: true,
+        user: {
+          select: {
+            fullName: true,
+          },
+        },
         course: {
           include: {
             modules: { include: { lessons: true } },
+            instructor: {
+              select: {
+                fullName: true,
+              },
+            },
           },
         },
         quizAttempts: true,
@@ -40,9 +90,20 @@ async function ensureCertificateIssuedIfEligible(userId, courseId) {
     const existingCert = await prisma.certificate.findUnique({
       where: { enrollmentId: enrollment.enrollmentId },
     });
-    if (existingCert) return existingCert;
 
     const finalGrade = computeGradeFromAttempts(enrollment.quizAttempts);
+    const certificateDetails = {
+      studentName: enrollment.user.fullName,
+      courseTitle: enrollment.course.title,
+      instructorName: enrollment.course.instructor.fullName,
+      grade: finalGrade,
+    };
+
+    if (existingCert) {
+      const hydratedCert = await ensureCertificatePdfForRecord(existingCert, certificateDetails);
+      return { ...hydratedCert, grade: finalGrade };
+    }
+
 
     const newCert = await prisma.certificate.create({
       data: {
@@ -55,12 +116,14 @@ async function ensureCertificateIssuedIfEligible(userId, courseId) {
       },
     });
 
+    const certificateWithPdf = await ensureCertificatePdfForRecord(newCert, certificateDetails);
+
     await prisma.enrollment.update({
       where: { enrollmentId: enrollment.enrollmentId },
       data: { status: ENROLLMENT_STATUS_COMPLETED },
     });
 
-    return { ...newCert, grade: finalGrade };
+    return { ...certificateWithPdf, grade: finalGrade };
   } catch (error) {
     console.error('Issue Certificate Error:', error);
     return null;
@@ -70,4 +133,5 @@ async function ensureCertificateIssuedIfEligible(userId, courseId) {
 module.exports = {
   ensureCertificateIssuedIfEligible,
   computeGradeFromAttempts,
+  ensureCertificatePdfForRecord,
 };

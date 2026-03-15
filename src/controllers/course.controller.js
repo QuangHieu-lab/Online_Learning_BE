@@ -152,7 +152,7 @@ const getCourseById = async (req, res) => {
     const roles = req.userRoles || [];
     const isAdmin = roles.includes('admin');
 
-    const access = await ensureCourseAccess(courseId, userId);
+    const access = await ensureCourseAccess(courseId, userId, { roles });
     if (access.error) {
       return sendAccessError(res, access.error);
     }
@@ -187,6 +187,13 @@ const getCourseById = async (req, res) => {
                     title: true,
                     timeLimitMinutes: true,
                     passingScore: true,
+                  },
+                },
+                assignments: {
+                  select: {
+                    assignmentId: true,
+                    title: true,
+                    instructions: true,
                   },
                 },
               },
@@ -342,7 +349,7 @@ const getCourseModules = async (req, res) => {
       return res.status(400).json({ error: 'Invalid course ID' });
     }
 
-    const access = await ensureCourseAccess(courseId, userId);
+    const access = await ensureCourseAccess(courseId, userId, { roles: req.userRoles || [] });
     if (access.error) {
       return sendAccessError(res, access.error);
     }
@@ -406,7 +413,7 @@ const enrollInCourse = async (req, res) => {
     const { courseId } = req.params;
     const userId = req.userId;
 
-    const access = await ensureCourseAccess(courseId, userId);
+    const access = await ensureCourseAccess(courseId, userId, { roles: req.userRoles || [] });
     if (access.error) {
       return sendAccessError(res, access.error);
     }
@@ -502,6 +509,8 @@ const getCoursesByStudentId = async (req, res) => {
             thumbnailUrl: true,
             description: true,
             levelTarget: true,
+            contentFlagged: true,
+            contentFlaggedReason: true,
             // Lấy thêm thông tin giảng viên để hiển thị đẹp
             instructor: {
               select: {
@@ -669,7 +678,7 @@ const approveCourse = async (req, res) => {
   try {
     const { courseId } = req.params;
 
-    const access = await ensureCourseAccess(courseId, req.userId);
+    const access = await ensureCourseAccess(courseId, req.userId, { roles: req.userRoles || [] });
     if (access.error) {
       return sendAccessError(res, access.error);
     }
@@ -724,7 +733,7 @@ const rejectCourse = async (req, res) => {
       return res.status(400).json({ error: 'Admin note (rejection reason) is required' });
     }
 
-    const access = await ensureCourseAccess(courseId, req.userId);
+    const access = await ensureCourseAccess(courseId, req.userId, { roles: req.userRoles || [] });
     if (access.error) {
       return sendAccessError(res, access.error);
     }
@@ -798,7 +807,7 @@ const flagCourseContent = async (req, res) => {
     const { courseId } = req.params;
     const { reason } = req.body || {};
 
-    const access = await ensureCourseAccess(courseId, req.userId);
+    const access = await ensureCourseAccess(courseId, req.userId, { roles: req.userRoles || [] });
     if (access.error) {
       return sendAccessError(res, access.error);
     }
@@ -842,7 +851,7 @@ const unflagCourseContent = async (req, res) => {
   try {
     const { courseId } = req.params;
 
-    const access = await ensureCourseAccess(courseId, req.userId);
+    const access = await ensureCourseAccess(courseId, req.userId, { roles: req.userRoles || [] });
     if (access.error) {
       return sendAccessError(res, access.error);
     }
@@ -955,6 +964,13 @@ const getInstructorCourses = async (req, res) => {
               include: {
                 quizzes: {
                   select: { quizId: true, title: true },
+                },
+                assignments: {
+                  select: {
+                    assignmentId: true,
+                    title: true,
+                    instructions: true,
+                  },
                 },
                 lessonResources: {
                   select: { resourceId: true, fileType: true, fileUrl: true, title: true },

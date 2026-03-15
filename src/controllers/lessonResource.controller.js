@@ -1,6 +1,7 @@
 const prisma = require('../utils/prisma');
 const path = require('path');
 const { ENROLLMENT_STATUS_ACTIVE, ENROLLMENT_STATUS_COMPLETED } = require('../config/constants');
+const { FLAGGED_COURSE_MESSAGE, getFlaggedCourseError } = require('../utils/access.helpers');
 
 /** Check if user can access lesson: admin, instructor of course, or enrolled student with active enrollment. */
 async function canAccessLesson(prismaClient, lessonId, userId, roles = []) {
@@ -13,6 +14,10 @@ async function canAccessLesson(prismaClient, lessonId, userId, roles = []) {
   if (!lesson) return { allowed: false, lesson: null };
   if (Array.isArray(roles) && roles.includes('admin')) {
     return { allowed: true, lesson };
+  }
+  const flaggedError = getFlaggedCourseError(lesson.module.course, roles);
+  if (flaggedError) {
+    return { allowed: false, lesson, flagged: true };
   }
   const courseId = lesson.module.courseId;
   const userIdNum = typeof userId === 'string' ? parseInt(userId, 10) : userId;
@@ -38,6 +43,9 @@ const listByLesson = async (req, res) => {
     }
     const { allowed, lesson } = await canAccessLesson(prisma, lessonId, userId, req.userRoles || []);
     if (!allowed || !lesson) {
+      if (lesson?.module?.course?.contentFlagged) {
+        return res.status(403).json({ error: FLAGGED_COURSE_MESSAGE });
+      }
       return res.status(404).json({ error: 'Lesson not found or access denied' });
     }
     const resources = await prisma.lessonResource.findMany({
